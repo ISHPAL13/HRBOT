@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HR Interview Bot — Professional Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <script src="/static/script.js" defer></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    
+    body {
+      background: #0a0e1a;
+      background-image: 
+        radial-gradient(at 20% 30%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
+        radial-gradient(at 80% 70%, rgba(168, 85, 247, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 50%, rgba(59, 130, 246, 0.05) 0px, transparent 50%);
+      color: #f8fafc;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+    
+    /* Sidebar Styling */
+    .sidebar {
+      background: linear-gradient(180deg, rgba(17, 24, 39, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+      backdrop-filter: blur(20px) saturate(180%);
+      border-right: 1px solid rgba(99, 102, 241, 0.1);
+      box-shadow: 4px 0 40px rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+    }
+    
+    /* Button Styles */
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #4338ca 100%);
+      color: white;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4), 0 2px 4px rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .btn-primary::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+      transition: left 0.5s;
+    }
+    
+    .btn-primary:hover:not(:disabled)::before {
+      left: 100%;
+    }
+    
+    .btn-primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, #4f46e5 0%, #4338ca 50%, #3730a3 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.5), 0 4px 8px rgba(0, 0, 0, 0.3);
+    }
+    
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .btn-danger {
+      background: linear-gradient(135deg, #f43f5e 0%, #e11d48 50%, #be123c 100%);
+      color: white;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 16px rgba(244, 63, 94, 0.4), 0 2px 4px rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .btn-danger:hover {
+      background: linear-gradient(135deg, #e11d48 0%, #be123c 50%, #9f1239 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(244, 63, 94, 0.5), 0 4px 8px rgba(0, 0, 0, 0.3);
+    }
+    
+    .btn-secondary {
+      background: rgba(71, 85, 105, 0.4);
+      color: #e2e8f0;
+      font-weight: 600;
+      transition: all 0.3s ease;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      backdrop-filter: blur(10px);
+    }
+    
+    .btn-secondary:hover {
+      background: rgba(100, 116, 139, 0.6);
+      border-color: rgba(148, 163, 184, 0.4);
+      transform: translateY(-1px);
+    }
+    
+    /* Card Styles */
+    .card {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(17, 24, 39, 0.8) 100%);
+      backdrop-filter: blur(30px) saturate(180%);
+      border: 1px solid rgba(99, 102, 241, 0.15);
+      border-radius: 20px;
+      box-shadow: 
+        0 10px 40px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 1px 2px rgba(0, 0, 0, 0.4);
+      transition: all 0.3s ease;
+    }
+    
+    .card:hover {
+      border-color: rgba(99, 102, 241, 0.25);
+      box-shadow: 
+        0 15px 50px rgba(0, 0, 0, 0.4),
+        0 0 40px rgba(99, 102, 241, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      transform: translateY(-2px);
+    }
+    
+    /* Input Styles */
+    input[type="text"] {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      color: white;
+      transition: all 0.3s ease;
+      backdrop-filter: blur(10px);
+    }
+    
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15), 0 4px 12px rgba(99, 102, 241, 0.2);
+      background: rgba(15, 23, 42, 0.95);
+    }
+    
+    /* Video Container */
+    .video-container {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 
+        0 20px 60px rgba(0, 0, 0, 0.5),
+        0 0 80px rgba(99, 102, 241, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      background: linear-gradient(135deg, #000 0%, #0a0e1a 100%);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+    }
+    
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    /* Status Badge */
+    .status-badge {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 14px;
+      padding: 12px 24px;
+      font-weight: 700;
+      font-size: 0.875rem;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    
+    .status-badge.listening {
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(79, 70, 229, 0.15) 100%);
+      border-color: rgba(99, 102, 241, 0.5);
+      color: #a5b4fc;
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3), 0 0 30px rgba(99, 102, 241, 0.2);
+    }
+    
+    .status-badge.speaking {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.15) 100%);
+      border-color: rgba(16, 185, 129, 0.5);
+      color: #6ee7b7;
+      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3), 0 0 30px rgba(16, 185, 129, 0.2);
+    }
+    
+    .status-badge.processing {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(217, 119, 6, 0.15) 100%);
+      border-color: rgba(245, 158, 11, 0.5);
+      color: #fcd34d;
+      box-shadow: 0 4px 20px rgba(245, 158, 11, 0.3), 0 0 30px rgba(245, 158, 11, 0.2);
+    }
+    
+    /* System Logs */
+    #status {
+      background: rgba(10, 14, 26, 0.8);
+      border: 1px solid rgba(99, 102, 241, 0.15);
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      line-height: 1.7;
+      color: #94a3b8;
+      backdrop-filter: blur(10px);
+    }
+    
+    /* Info Box */
+    .info-box {
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(79, 70, 229, 0.08) 100%);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 14px;
+      backdrop-filter: blur(15px);
+      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, rgba(17, 24, 39, 0.92) 0%, rgba(10, 14, 26, 0.95) 100%);
+      backdrop-filter: blur(30px) saturate(180%);
+      border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2), inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+    }
+    
+    /* Logo/Title Area */
+    .logo-area {
+      border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, transparent 100%);
+      position: relative;
+    }
+    
+    .logo-area::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.5), transparent);
+    }
+    
+    /* Smooth Animations */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    @keyframes shimmer {
+      0% { background-position: -1000px 0; }
+      100% { background-position: 1000px 0; }
+    }
+    
+    .animate-in {
+      animation: fadeIn 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    /* Glow Effect */
+    .glow {
+      position: relative;
+    }
+    
+    .glow::before {
+      content: '';
+      position: absolute;
+      top: -2px;
+      left: -2px;
+      right: -2px;
+      bottom: -2px;
+      background: linear-gradient(45deg, #6366f1, #8b5cf6, #ec4899, #6366f1);
+      border-radius: inherit;
+      opacity: 0;
+      transition: opacity 0.3s;
+      z-index: -1;
+      filter: blur(10px);
+    }
+    
+    .glow:hover::before {
+      opacity: 0.7;
+    }
+    
+    /* Scrollbar Styling */
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 10px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, rgba(99, 102, 241, 0.6) 0%, rgba(79, 70, 229, 0.6) 100%);
+      border-radius: 10px;
+      border: 2px solid rgba(15, 23, 42, 0.5);
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, rgba(99, 102, 241, 0.8) 0%, rgba(79, 70, 229, 0.8) 100%);
+    }
+    
+    /* Section Headers with Icons */
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid rgba(99, 102, 241, 0.2);
+      margin-bottom: 16px;
+    }
+    
+    /* Live Indicator Pulse */
+    @keyframes pulse-glow {
+      0%, 100% {
+        box-shadow: 0 0 8px rgba(244, 63, 94, 0.8), 0 0 16px rgba(244, 63, 94, 0.4);
+      }
+      50% {
+        box-shadow: 0 0 16px rgba(244, 63, 94, 1), 0 0 24px rgba(244, 63, 94, 0.6);
+      }
+    }
+    
+    .live-dot {
+      animation: pulse-glow 2s infinite;
+    }
+  </style>
+</head>
+<body class="font-sans antialiased">
+  <div class="flex h-screen">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar w-72 flex flex-col">
+      <div class="logo-area px-6 py-6">
+        <div class="flex items-center gap-3 mb-2">
+          <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-xl glow">
+            <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+            </svg>
+          </div>
+          <div>
+            <h1 class="text-xl font-bold text-white tracking-tight">InterviewAI</h1>
+            <p class="text-xs font-semibold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Professional Edition</p>
+          </div>
+        </div>
+      </div>
+      
+      <nav class="flex-1 p-5 space-y-3">
+        <div class="space-y-2">
+          <button id="startBtn" class="btn-primary w-full px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Start Interview
+          </button>
+          <button id="closeBtn" class="btn-danger w-full px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+            </svg>
+            End Session
+          </button>
+        </div>
+        
+        <div class="pt-4 space-y-3">
+          <h2 class="font-semibold text-gray-300 text-xs uppercase tracking-wider mb-3">Avatar Settings</h2>
+          <div>
+            <label class="block text-xs font-medium text-gray-400 mb-1.5">Avatar ID</label>
+            <input id="avatarID" type="text" value="Wayne_20240711"
+              class="w-full px-3 py-2.5 rounded-lg text-sm text-white placeholder-gray-500" />
+            <p class="text-[10px] text-gray-600 mt-1">Voice automatically matches your selected tone</p>
+          </div>
+        </div>
+      </nav>
+      
+      <div class="p-5 border-t border-gray-700/50">
+        <div class="text-xs text-gray-500 space-y-2">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-gradient-to-r from-green-400 to-emerald-500 shadow-lg shadow-green-500/50 animate-pulse"></div>
+            <span class="text-gray-400 font-medium">System Online</span>
+          </div>
+          <p class="text-gray-600 text-[10px]">&copy; 2025 InterviewAI • v1.0</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+      
+      <!-- Header -->
+      <header class="header px-8 py-5 flex items-center justify-between">
+        <div>
+          <h2 class="text-2xl font-bold bg-gradient-to-r from-white via-indigo-100 to-purple-200 bg-clip-text text-transparent tracking-tight">Live Interview Session</h2>
+          <p class="text-sm text-indigo-300/70 mt-1 font-medium">AI-powered conversational interview experience</p>
+        </div>
+        <div id="conversationState" class="status-badge">
+          ⏸️ Conversation paused
+        </div>
+      </header>
+
+      <!-- Content -->
+      <div class="flex-1 p-8 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto">
+        
+        <!-- Video Panel -->
+        <section class="card p-6 flex flex-col col-span-2 animate-in">
+          <div class="flex items-center justify-between mb-4 section-header">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold text-white">AI Interviewer</h3>
+            </div>
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/30">
+              <div class="w-2 h-2 rounded-full bg-red-500 live-dot"></div>
+              <span class="text-xs font-bold text-red-400 tracking-wider">LIVE</span>
+            </div>
+          </div>
+          <div class="video-container flex-1 min-h-[400px]">
+            <video id="mediaElement" class="w-full h-full" autoplay playsinline></video>
+          </div>
+        </section>
+
+        <!-- Controls -->
+        <section class="card p-6 flex flex-col animate-in space-y-4" style="animation-delay: 0.1s;">
+          <div class="section-header">
+            <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-lg">
+              <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path>
+              </svg>
+            </div>
+            <h3 class="text-lg font-bold text-white">Manual Input</h3>
+          </div>
+          
+          <div class="space-y-2">
+            <input id="taskInput" type="text" placeholder="Type your response here..."
+              class="w-full px-4 py-3 rounded-lg text-sm text-white placeholder-gray-500" />
+            <button id="talkBtn" class="btn-primary w-full px-4 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+              </svg>
+              Send Message
+            </button>
+          </div>
+          
+          <div class="info-box p-4">
+            <div class="flex items-start gap-3">
+              <svg class="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <div class="text-xs leading-relaxed text-blue-200">
+                <strong class="font-semibold">Auto-Conversation Mode Active</strong><br/>
+                Simply speak naturally. The AI will detect when you're done and respond automatically.
+              </div>
+            </div>
+          </div>
+          
+          <div class="flex-1 flex flex-col min-h-0">
+            <h4 class="text-sm font-bold text-indigo-300 mb-3 flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+              </svg>
+              System Activity Log
+            </h4>
+            <div id="status" class="p-3 rounded-xl flex-1 overflow-y-auto text-xs leading-relaxed"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
