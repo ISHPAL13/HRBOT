@@ -5,8 +5,8 @@
   // ----------------- CONFIG -----------------
   const BACKEND_BASE = window.location.origin; 
   const HEYGEN_API_BASE = "https://api.heygen.com";
-  const SILENCE_THRESHOLD = 1500; // ms of silence before sending audio
-  const MIN_RECORDING_TIME = 500; // minimum recording duration
+  const SILENCE_THRESHOLD = 1200; // ms of silence before sending audio (reduced for faster response)
+  const MIN_RECORDING_TIME = 400; // minimum recording duration (reduced)
 
   // ----------------- DOM -----------------
   const avatarID = document.getElementById("avatarID");
@@ -18,6 +18,8 @@
   const mediaElement = document.getElementById("mediaElement");
   const statusEl = document.getElementById("status");
   const conversationState = document.getElementById("conversationState");
+  const evaluateBtn = document.getElementById("evaluateBtn");
+  const userWebcam = document.getElementById("userWebcam");
 
   // ----------------- STATE -----------------
   let sessionToken = null;
@@ -123,7 +125,11 @@
   // Always force repeat mode
   async function heygenSendTask(sid, token, text) {
     if (!sid || !token) throw new Error("No active session");
-    logStatus(`Sending Gemini text to HeyGen avatar (repeat): "${text.substring(0, 50)}..."`);
+    if (!text || text.trim().length === 0) {
+      logStatus("⚠️ Attempted to send empty text to HeyGen, skipping");
+      return { code: 0, message: "Empty text skipped" };
+    }
+    logStatus(`Sending text to HeyGen avatar: "${text.substring(0, 50)}..."`);  
     const res = await fetch(`${HEYGEN_API_BASE}/v1/streaming.task`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -195,7 +201,12 @@
     analyser.getByteFrequencyData(dataArray);
 
     const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-    const isSilent = average < 10; // Silence threshold
+    const isSilent = average < 5; // Lower threshold for better sensitivity (was 10)
+    
+    // Debug: Log audio levels occasionally
+    if (Math.random() < 0.05) { // 5% of the time
+      console.log(`Audio level: ${average.toFixed(2)}`);
+    }
 
     if (isSilent) {
       if (!silenceTimer && recordedChunks.length > 0) {
@@ -229,7 +240,15 @@
       recordingStartTime = Date.now();
       
       if (!audioStream) {
-        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Request microphone with better constraints
+        audioStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 16000
+          }
+        });
         
         // Set up audio analysis for VAD
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -239,13 +258,23 @@
         source.connect(analyser);
       }
 
-      recorder = new MediaRecorder(audioStream, { mimeType: "audio/webm;codecs=opus" });
+      // Try to use the best available audio format
+      let mimeType = "audio/webm;codecs=opus";
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = "audio/webm";
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = "audio/mp4";
+        }
+      }
+      console.log(`Using audio format: ${mimeType}`);
+      
+      recorder = new MediaRecorder(audioStream, { mimeType });
       
       recorder.ondataavailable = (ev) => {
         if (ev.data?.size > 0) recordedChunks.push(ev.data);
       };
 
-      recorder.start(100); // Collect data every 100ms
+      recorder.start(200); // Collect data every 200ms (reduced for smaller chunks)
       isListening = true;
       updateConversationState("🎤 Listening...");
       logStatus("👂 Listening for your response...");
@@ -276,7 +305,7 @@
         const blob = new Blob(recordedChunks, { type: "audio/webm" });
         recordedChunks = [];
         
-        if (blob.size < 1000) {
+        if (blob.size < 500) { // Reduced from 1000 to accept smaller audio clips
           logStatus("Audio too short, resuming listening...");
           if (conversationActive && !isSpeaking) {
             setTimeout(() => startListening(), 500);
@@ -284,6 +313,8 @@
           resolve();
           return;
         }
+        
+        console.log(`Audio blob size: ${blob.size} bytes`);
 
         try {
           isSpeaking = true;
@@ -307,15 +338,32 @@
           // Send user input to LLM (CV context and tone handled by backend)
           const llmResp = await postPromptToLLM(userText);
           const botText = (llmResp?.text || "").trim();
-          logStatus("💬 Sarah: " + botText);
-
-          if (sessionInfo && sessionToken && botText) {
-            updateConversationState("🗣️ Avatar speaking...");
-            await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
+          
+          // Debug logging
+          console.log("LLM Response:", llmResp);
+          console.log("Bot Text:", botText);
+          
+          if (!botText) {
+            logStatus("⚠️ Empty response from LLM, using fallback");
+            const fallbackText = "Could you please elaborate on that?";
+            logStatus("💬 Sarah: " + fallbackText);
             
-            // Wait for avatar to finish speaking (estimate based on text length)
-            const speakingDuration = Math.max(3000, botText.length * 80); // ~80ms per character
-            await new Promise(r => setTimeout(r, speakingDuration));
+            if (sessionInfo && sessionToken) {
+              updateConversationState("🗣️ Avatar speaking...");
+              await heygenSendTask(sessionInfo.session_id, sessionToken, fallbackText);
+              await new Promise(r => setTimeout(r, 4000));
+            }
+          } else {
+            logStatus("💬 Sarah: " + botText);
+            
+            if (sessionInfo && sessionToken) {
+              updateConversationState("🗣️ Avatar speaking...");
+              await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
+              
+              // Wait for avatar to finish speaking (estimate based on text length)
+              const speakingDuration = Math.max(3000, botText.length * 80); // ~80ms per character
+              await new Promise(r => setTimeout(r, speakingDuration));
+            }
           }
           
           isSpeaking = false;
@@ -393,8 +441,11 @@
         return;
       }
       
-      logStatus(`✅ Welcome ${userInfo.name}!`);
+      logStatus("✅ Welcome ${userInfo.name}!");
       logStatus(`   Interview Mode: ${userInfo.mock_interview ? 'Mock (' + userInfo.tone + ')' : 'Real'}`);
+      
+      // Show evaluate button after session starts
+      if (evaluateBtn) evaluateBtn.style.display = 'flex';
       
       sessionToken = await requestSessionTokenFromBackend();
       sessionInfo = await heygenCreateSession(sessionToken);
@@ -434,9 +485,72 @@
     sessionInfo = null; sessionToken = null;
     isSpeaking = false;
     
+    // Note: We keep user webcam running even after session ends
+    // User can refresh page to stop it
+    
     updateConversationState("⏹️ Session ended");
     logStatus("Session stopped");
     startBtn.disabled = false;
+    
+    // Keep evaluate button visible after ending session
+    if (evaluateBtn) evaluateBtn.style.display = 'flex';
+  }
+
+  async function evaluateAndGenerateReport() {
+    if (!confirm("End interview and generate evaluation report?")) return;
+    
+    try {
+      evaluateBtn.disabled = true;
+      evaluateBtn.innerHTML = '<svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Evaluating...';
+      
+      logStatus("🔍 Analyzing interview performance...");
+      
+      const response = await fetch(`${BACKEND_BASE}/api/evaluate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        const evaluation = result.evaluation;
+        logStatus(`✅ Evaluation Complete!`);
+        logStatus(`   Overall Score: ${evaluation.overall_score}/100`);
+        logStatus(`   Technical: ${evaluation.technical_score}/100`);
+        logStatus(`   Communication: ${evaluation.communication_score}/100`);
+        logStatus(`   Experience: ${evaluation.experience_score}/100`);
+        
+        // Download PDF
+        const downloadUrl = `${BACKEND_BASE}/api/download-report/${result.report_filename}`;
+        logStatus(`📄 Downloading PDF report...`);
+        
+        // Create download link and click it
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = 'Interview_Evaluation_Report.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        logStatus(`✅ Report downloaded successfully!`);
+        
+        alert(`Evaluation Complete!\n\nOverall Score: ${evaluation.overall_score}/100\n\nPDF report has been downloaded.`);
+        
+        // Reset button
+        evaluateBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg> Generate Report';
+        evaluateBtn.disabled = false;
+      } else {
+        logStatus(`❌ Error: ${result.error}`);
+        alert(`Error: ${result.error}`);
+        evaluateBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg> Generate Report';
+        evaluateBtn.disabled = false;
+      }
+    } catch (error) {
+      logStatus(`❌ Evaluation failed: ${error.message}`);
+      alert(`Error: ${error.message}`);
+      evaluateBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg> Generate Report';
+      evaluateBtn.disabled = false;
+    }
   }
 
   async function onTalkClick() {
@@ -454,9 +568,18 @@
       // Send user input to LLM (CV context and tone handled by backend)
       const llmResp = await postPromptToLLM(userText);
       const botText = (llmResp?.text || "").trim();
-      logStatus("💬 Sarah: " + botText);
-
-      if (botText) {
+      
+      console.log("Manual LLM Response:", llmResp);
+      console.log("Manual Bot Text:", botText);
+      
+      if (!botText) {
+        logStatus("⚠️ Empty response from LLM");
+        const fallbackText = "I didn't quite catch that. Could you rephrase?";
+        logStatus("💬 Sarah: " + fallbackText);
+        await heygenSendTask(sessionInfo.session_id, sessionToken, fallbackText);
+        await new Promise(r => setTimeout(r, 4000));
+      } else {
+        logStatus("💬 Sarah: " + botText);
         updateConversationState("🗣️ Avatar speaking...");
         await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
         
@@ -481,10 +604,44 @@
     }
   }
 
+  // ----------------- User Webcam Setup -----------------
+  async function startUserWebcam() {
+    try {
+      logStatus("📹 Starting your webcam...");
+      const videoStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+          facingMode: "user"
+        } 
+      });
+      
+      if (userWebcam) {
+        userWebcam.srcObject = videoStream;
+        logStatus("✅ Your webcam is active");
+      }
+    } catch (e) {
+      logStatus("⚠️ Could not access webcam: " + e.message);
+      console.warn("Webcam error:", e);
+    }
+  }
+
+  function stopUserWebcam() {
+    if (userWebcam && userWebcam.srcObject) {
+      userWebcam.srcObject.getTracks().forEach(track => track.stop());
+      userWebcam.srcObject = null;
+      logStatus("📹 Webcam stopped");
+    }
+  }
+
   // ----------------- Event wiring -----------------
   startBtn?.addEventListener("click", startSessionFlow);
   closeBtn?.addEventListener("click", stopSessionFlow);
   talkBtn?.addEventListener("click", onTalkClick);
+  evaluateBtn?.addEventListener("click", evaluateAndGenerateReport);
+
+  // Start user webcam on page load
+  startUserWebcam();
 
   logStatus("🎯 UI ready. Click 'Start Session' to begin live conversation!");
 })();

@@ -156,7 +156,30 @@
     video {
       width: 100%;
       height: 100%;
+      object-fit: contain; /* Changed from cover to contain to fit avatar in frame */
+      background: #000;
+    }
+    
+    /* User Webcam in Corner */
+    #userWebcam {
+      position: absolute;
+      bottom: 15px;
+      right: 15px;
+      width: 160px;
+      height: 120px;
+      border-radius: 10px;
+      border: 2px solid rgba(99, 102, 241, 0.6);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6), 0 0 15px rgba(99, 102, 241, 0.4);
       object-fit: cover;
+      background: #000;
+      z-index: 10;
+      transition: all 0.3s ease;
+    }
+    
+    #userWebcam:hover {
+      transform: scale(1.08);
+      border-color: rgba(99, 102, 241, 0.9);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 25px rgba(99, 102, 241, 0.6);
     }
     
     /* Status Badge */
@@ -357,13 +380,19 @@
             </svg>
             End Session
           </button>
+          <button id="evaluateBtn" class="btn-secondary w-full px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2" style="display:none;">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            Generate Report
+          </button>
         </div>
         
         <div class="pt-4 space-y-3">
           <h2 class="font-semibold text-gray-300 text-xs uppercase tracking-wider mb-3">Avatar Settings</h2>
           <div>
             <label class="block text-xs font-medium text-gray-400 mb-1.5">Avatar ID</label>
-            <input id="avatarID" type="text" value="Wayne_20240711"
+            <input id="avatarID" type="text" value="June_HR_public"
               class="w-full px-3 py-2.5 rounded-lg text-sm text-white placeholder-gray-500" />
             <p class="text-[10px] text-gray-600 mt-1">Voice automatically matches your selected tone</p>
           </div>
@@ -414,8 +443,9 @@
               <span class="text-xs font-bold text-red-400 tracking-wider">LIVE</span>
             </div>
           </div>
-          <div class="video-container flex-1 min-h-[400px]">
+          <div class="video-container flex-1 max-h-[500px]">
             <video id="mediaElement" class="w-full h-full" autoplay playsinline></video>
+            <video id="userWebcam" autoplay playsinline muted></video>
           </div>
         </section>
 

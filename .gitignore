@@ -17,8 +17,9 @@ ENV/
 instance/
 .webassets-cache
 
-# Uploads
+# Uploads and Reports
 backend/uploads/
+backend/reports/
 *.pdf
 
 # Environment variables
