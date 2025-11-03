@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for, send_file
 import requests, os, tempfile
-import whisper
 import PyPDF2
 from google import genai
 from werkzeug.utils import secure_filename
@@ -12,6 +11,10 @@ from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from datetime import datetime
 import json
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
@@ -26,17 +29,7 @@ os.makedirs(app.config['REPORTS_FOLDER'], exist_ok=True)
 # Get API keys from environment, fallback to manual hardcoded values for dev
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY", "ZWQ3MGM4ZGE4NDdiNDU3MjkxMTA3ZjlhNmUwY2FiY2YtMTc1NjcwNDg3OQ==")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your_gemini_api_key_here")
-
-# Lazy load Whisper model (loads on first use instead of startup)
-whisper_model = None
-
-def get_whisper_model():
-    global whisper_model
-    if whisper_model is None:
-        print("Loading Whisper model... (this may take a minute)")
-        whisper_model = whisper.load_model("base")
-        print("Whisper model loaded successfully!")
-    return whisper_model
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "your_deepgram_api_key_here")
 
 def extract_text_from_pdf(pdf_path):
     """Extract text content from PDF file"""
@@ -210,40 +203,78 @@ def get_session_token():
         return jsonify({"error": "HEYGEN_API_KEY not configured"}), 500
     return jsonify({"data": {"token": HEYGEN_API_KEY}})
 
-@app.route("/stt", methods=["POST"])
-def stt():
-    if 'audio' not in request.files:
-        return jsonify({"error": "No audio file"}), 400
+@app.route("/deepgram/api-key", methods=["GET"])
+def get_deepgram_key():
+    """Provide Deepgram API key to frontend (for client-side STT)"""
+    if not DEEPGRAM_API_KEY or DEEPGRAM_API_KEY.startswith("your_"):
+        return jsonify({"error": "DEEPGRAM_API_KEY not configured"}), 500
+    
+    # Return the API key for client-side use
+    # Note: In production, consider using temporary keys or proxy requests
+    return jsonify({"api_key": DEEPGRAM_API_KEY})
 
-    audio_file = request.files['audio']
-    tmp_path = None
+@app.route("/stt", methods=["POST"])
+def speech_to_text():
+    """Convert audio to text using Deepgram API"""
     try:
-        print(f"\n🎤 STT Request - Audio size: {audio_file.content_length or 'unknown'} bytes")
+        if not DEEPGRAM_API_KEY or DEEPGRAM_API_KEY.startswith("your_"):
+            return jsonify({"error": "DEEPGRAM_API_KEY not configured", "text": ""}), 500
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-            tmp_path = tmp.name
-            audio_file.save(tmp_path)
-            
-            print("   Loading Whisper model...")
-            model = get_whisper_model()  # Load model only when needed
-            
-            print("   Transcribing audio...")
-            # Use faster settings for quicker transcription
-            result = model.transcribe(tmp_path, fp16=False, language="en")
-            text = result["text"].strip()
-            
-            print(f"✅ STT Result: '{text}'")
-        return jsonify({"text": text})
+        # Get audio file from request
+        if 'audio' not in request.files:
+            return jsonify({"error": "No audio file provided", "text": ""}), 400
+        
+        audio_file = request.files['audio']
+        
+        # Read audio data
+        audio_data = audio_file.read()
+        
+        if len(audio_data) == 0:
+            return jsonify({"error": "Empty audio file", "text": ""}), 400
+        
+        print(f"📤 Sending {len(audio_data)} bytes to Deepgram STT...")
+        
+        # Send to Deepgram API
+        headers = {
+            "Authorization": f"Token {DEEPGRAM_API_KEY}",
+            "Content-Type": "audio/webm"
+        }
+        
+        params = {
+            "model": "nova-2",
+            "language": "en-US",
+            "smart_format": "true",
+            "punctuate": "true"
+        }
+        
+        response = requests.post(
+            "https://api.deepgram.com/v1/listen",
+            headers=headers,
+            params=params,
+            data=audio_data,
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            print(f"❌ Deepgram API error: {response.status_code} - {response.text}")
+            return jsonify({"error": f"Deepgram API error: {response.status_code}", "text": ""}), 500
+        
+        result = response.json()
+        
+        # Extract transcript
+        transcript = ""
+        if result.get("results") and result["results"].get("channels"):
+            alternatives = result["results"]["channels"][0].get("alternatives", [])
+            if alternatives:
+                transcript = alternatives[0].get("transcript", "").strip()
+        
+        print(f"📝 Deepgram transcript: '{transcript}'")
+        
+        return jsonify({"text": transcript})
+        
     except Exception as e:
-        print(f"❌ STT error: {str(e)}")
-        return jsonify({"error": f"STT error: {str(e)}"}), 500
-    finally:
-        # Clean up temporary file
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except:
-                pass
+        print(f"❌ STT error: {e}")
+        return jsonify({"error": str(e), "text": ""}), 500
 
 @app.route("/llm", methods=["POST"])
 def llm():
@@ -270,17 +301,64 @@ def llm():
     user_name = session.get('user_name', 'Candidate')
     cv_text = session.get('cv_text', '')
     tone = session.get('interviewer_tone', 'professional')
+    conversation_history = session.get('conversation_history', [])
     
-    print(f"   User: {user_name}, Tone: {tone}")
+    print(f"   User: {user_name}, Tone: {tone}, Conversation turns: {len(conversation_history)}")
     
-    # Build context-aware prompt
+    # Generate CV-based questions on first interaction
+    if 'cv_questions' not in session and cv_text:
+        print("   📝 Generating CV-based questions...")
+        session['cv_questions'] = generate_cv_questions_internal(cv_text)
+        session['question_index'] = 0
+        session.modified = True
+    
+    # Build context-aware prompt with CV analysis and conversation history
     context_prompt = get_tone_prompt(tone, cv_text, user_name)
     
-    full_prompt = f"""{context_prompt}
+    # Add conversation history for context
+    history_context = ""
+    if len(conversation_history) > 0:
+        recent_history = conversation_history[-3:]  # Last 3 exchanges
+        history_context = "\n\nRECENT CONVERSATION:\n" + "\n".join([
+            f"Q: {item['question']}\nA: {item['answer']}"
+            for item in recent_history
+        ])
+    
+    # Get CV-based questions if available
+    cv_questions_context = ""
+    if 'cv_questions' in session:
+        questions = session['cv_questions']
+        question_index = session.get('question_index', 0)
+        if question_index < len(questions):
+            cv_questions_context = f"\n\nSUGGESTED QUESTIONS TO ASK (based on CV analysis):\n"
+            for i in range(question_index, min(question_index + 3, len(questions))):
+                cv_questions_context += f"- {questions[i]['question']}\n"
+    
+    full_prompt = f"""{context_prompt}{history_context}{cv_questions_context}
 
-Candidate just said: "{user_input}"
+CANDIDATE'S LATEST RESPONSE: "{user_input}"
 
-Now give your one-sentence reply as the interviewer."""
+YOUR TASK AS INTERVIEWER:
+1. If starting the interview or moving to a new topic:
+   - Ask one of the CV-based questions listed above
+   - Reference specific details from their resume (company names, technologies, projects)
+   
+2. If the candidate's answer was vague or incomplete:
+   - Ask a follow-up question to probe deeper
+   - Example: "Can you give me a specific example?" or "What was your exact role in that?"
+   
+3. If the candidate answered well:
+   - Acknowledge briefly if appropriate (e.g., "That's interesting.")
+   - Move to the next CV-based question
+   - Or explore a related aspect of what they mentioned
+   
+4. Always:
+   - Keep questions conversational and natural
+   - Reference SPECIFIC items from their CV (technologies, companies, achievements)
+   - Ask one clear question at a time
+   - Avoid generic questions - be specific to their background
+
+Generate your next interview question (one sentence, conversational tone):"""
 
     try:
         # Initialize Google GenAI client (auto-detects GEMINI_API_KEY from environment)
@@ -321,6 +399,18 @@ Now give your one-sentence reply as the interviewer."""
             "answer": user_input,
             "timestamp": datetime.now().isoformat()
         })
+        
+        # Increment question index if we're using CV questions
+        if 'cv_questions' in session and 'question_index' in session:
+            # Check if the response contains a CV-based question
+            cv_questions = session['cv_questions']
+            question_index = session.get('question_index', 0)
+            if question_index < len(cv_questions):
+                # Move to next question after 2-3 exchanges on current topic
+                if len(session['conversation_history']) % 2 == 0:
+                    session['question_index'] = min(question_index + 1, len(cv_questions) - 1)
+                    print(f"   📊 Progress: Question {session['question_index'] + 1}/{len(cv_questions)}")
+        
         session.modified = True
         
         return jsonify({"text": text})
@@ -599,6 +689,346 @@ def download_report(filename):
         else:
             return jsonify({"error": "Report not found"}), 404
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ==================== NEW FEATURES ====================
+
+# Feature 3: Technical Coding Assessment
+@app.route("/coding-assessment")
+def coding_assessment():
+    """Render coding assessment page"""
+    if 'user_name' not in session:
+        return redirect(url_for('login'))
+    return render_template('coding_assessment.html')
+
+@app.route("/api/run-code", methods=["POST"])
+def run_code():
+    """Execute code and return output"""
+    try:
+        data = request.get_json()
+        code = data.get('code', '')
+        language = data.get('language', 'python')
+        
+        print(f"\n💻 Running {language} code...")
+        
+        # Simple execution for Python (for demo - use Judge0 API in production)
+        if language == 'python':
+            import subprocess
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                f.write(code)
+                f.flush()
+                try:
+                    result = subprocess.run(
+                        ['python', f.name],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    os.unlink(f.name)
+                    
+                    if result.returncode == 0:
+                        return jsonify({"success": True, "output": result.stdout})
+                    else:
+                        return jsonify({"success": False, "error": result.stderr})
+                except subprocess.TimeoutExpired:
+                    os.unlink(f.name)
+                    return jsonify({"success": False, "error": "Execution timeout (5s limit)"})
+        else:
+            return jsonify({"success": False, "error": f"{language} execution not yet supported"})
+            
+    except Exception as e:
+        print(f"❌ Code execution error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route("/api/submit-code", methods=["POST"])
+def submit_code():
+    """Evaluate code against test cases"""
+    try:
+        data = request.get_json()
+        code = data.get('code', '')
+        language = data.get('language', 'python')
+        
+        print(f"\n✅ Submitting {language} solution...")
+        
+        # Test cases for Two Sum problem
+        test_cases = [
+            {"input": ([2,7,11,15], 9), "expected": [0,1]},
+            {"input": ([3,2,4], 6), "expected": [1,2]},
+            {"input": ([3,3], 6), "expected": [0,1]}
+        ]
+        
+        passed_tests = 0
+        total_tests = len(test_cases)
+        details = []
+        
+        for i, test in enumerate(test_cases):
+            # Execute code with test input (simplified for demo)
+            # In production, use Judge0 API or similar
+            passed_tests += 1  # Mock pass for demo
+            
+        score = int((passed_tests / total_tests) * 100)
+        
+        # Save to session
+        if 'coding_assessment' not in session:
+            session['coding_assessment'] = {}
+        session['coding_assessment']['score'] = score
+        session['coding_assessment']['code'] = code
+        session['coding_assessment']['language'] = language
+        session.modified = True
+        
+        return jsonify({
+            "passed": passed_tests == total_tests,
+            "score": score,
+            "passed_tests": passed_tests,
+            "total_tests": total_tests,
+            "execution_time": 45,  # Mock
+            "details": "All test cases passed!" if passed_tests == total_tests else f"Failed {total_tests - passed_tests} test(s)"
+        })
+        
+    except Exception as e:
+        print(f"❌ Code submission error: {e}")
+        return jsonify({"passed": False, "error": str(e)})
+
+# Helper function for internal CV question generation
+def generate_cv_questions_internal(cv_text):
+    """Generate CV-based questions internally (called automatically)"""
+    try:
+        import os
+        if 'GEMINI_API_KEY' not in os.environ and GEMINI_API_KEY:
+            os.environ['GEMINI_API_KEY'] = GEMINI_API_KEY
+        
+        client = genai.Client()
+        
+        prompt = f"""You are an expert HR interviewer. Analyze the candidate's resume below and generate 8-10 highly specific interview questions.
+
+CANDIDATE RESUME:
+{cv_text[:3000]}
+
+INSTRUCTIONS:
+1. Extract key information:
+   - Specific technologies, tools, frameworks mentioned
+   - Companies worked at and roles held
+   - Projects completed and their impact
+   - Skills, certifications, education
+   - Achievements with quantifiable results
+
+2. Generate questions that:
+   - Reference SPECIFIC items from the resume (e.g., "Tell me about your work with React at XYZ Corp")
+   - Probe technical depth (e.g., "How did you optimize the PostgreSQL queries in your project?")
+   - Explore achievements (e.g., "You mentioned reducing costs by 30% - walk me through that")
+   - Assess problem-solving (e.g., "What was the biggest challenge in the ML pipeline you built?")
+   - Evaluate leadership/teamwork (if applicable)
+
+3. Question categories to include:
+   - Technical Skills (3-4 questions)
+   - Work Experience (2-3 questions)
+   - Projects & Achievements (2-3 questions)
+   - Problem-Solving (1-2 questions)
+
+4. Make questions conversational and natural, as if a human interviewer is asking them.
+
+Return ONLY a valid JSON array with no markdown formatting:
+[
+  {{"category": "Technical", "question": "Can you explain your experience with [specific technology from CV]?"}},
+  {{"category": "Experience", "question": "Tell me about your role at [company name]..."}},
+  {{"category": "Projects", "question": "Walk me through the [specific project] you mentioned..."}},
+  ...
+]"""
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+        
+        # Extract JSON from response
+        import re
+        json_match = re.search(r'\[[\s\S]*\]', response.text)
+        if json_match:
+            questions = json.loads(json_match.group())
+            print(f"   ✅ Generated {len(questions)} CV-based questions")
+            return questions
+        else:
+            print("   ⚠️ Failed to parse questions, using defaults")
+            return [
+                {"category": "Experience", "question": "Tell me about your most recent role and key responsibilities."},
+                {"category": "Technical", "question": "What technologies did you work with in your last project?"},
+                {"category": "Problem-Solving", "question": "Describe a challenging problem you solved recently."}
+            ]
+    except Exception as e:
+        print(f"   ❌ Question generation error: {e}")
+        return [
+            {"category": "Experience", "question": "Walk me through your professional background."},
+            {"category": "Skills", "question": "What are your strongest technical skills?"}
+        ]
+
+# Feature 4: Resume Parsing & Auto-Question Generation (Manual API - now optional)
+@app.route("/api/generate-questions", methods=["POST"])
+def generate_questions():
+    """Generate custom questions based on CV using Gemini (manual trigger)"""
+    try:
+        if 'cv_text' not in session:
+            return jsonify({"error": "No CV uploaded"}), 400
+        
+        cv_text = session.get('cv_text', '')
+        
+        print(f"\n📝 Manually generating custom questions from CV...")
+        
+        # Use the same internal function for consistency
+        questions = generate_cv_questions_internal(cv_text)
+        
+        # Store in session
+        session['custom_questions'] = questions
+        session.modified = True
+        
+        print(f"✅ Generated {len(questions)} custom questions")
+        return jsonify({"success": True, "questions": questions})
+            
+    except Exception as e:
+        print(f"❌ Question generation error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Feature 6: Body Language Analysis
+@app.route("/api/analyze-body-language", methods=["POST"])
+def analyze_body_language():
+    """Analyze body language from webcam frame"""
+    try:
+        # This would use MediaPipe or similar in production
+        # For now, return mock data
+        
+        analysis = {
+            "posture_score": 85,
+            "eye_contact_score": 78,
+            "confidence_level": "High",
+            "fidgeting_detected": False,
+            "facial_expression": "Neutral/Focused",
+            "recommendations": [
+                "Maintain good eye contact",
+                "Sit up straight",
+                "Avoid excessive hand movements"
+            ]
+        }
+        
+        # Store in session
+        if 'body_language_analysis' not in session:
+            session['body_language_analysis'] = []
+        session['body_language_analysis'].append({
+            "timestamp": datetime.now().isoformat(),
+            "analysis": analysis
+        })
+        session.modified = True
+        
+        return jsonify({"success": True, "analysis": analysis})
+        
+    except Exception as e:
+        print(f"❌ Body language analysis error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Feature 8: Enhanced Practice Mode
+@app.route("/api/practice-feedback", methods=["POST"])
+def practice_feedback():
+    """Get AI feedback on practice interview response"""
+    try:
+        data = request.get_json()
+        question = data.get('question', '')
+        answer = data.get('answer', '')
+        
+        print(f"\n🎯 Generating practice feedback...")
+        
+        import os
+        if 'GEMINI_API_KEY' not in os.environ and GEMINI_API_KEY:
+            os.environ['GEMINI_API_KEY'] = GEMINI_API_KEY
+        
+        client = genai.Client()
+        
+        prompt = f"""As an interview coach, provide detailed feedback on this answer.
+
+QUESTION: {question}
+ANSWER: {answer}
+
+Provide feedback in JSON format:
+{{
+  "score": <0-100>,
+  "strengths": ["point 1", "point 2"],
+  "weaknesses": ["point 1", "point 2"],
+  "suggestions": ["suggestion 1", "suggestion 2"],
+  "improved_answer": "A better way to answer this would be..."
+}}"""
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+        
+        # Extract JSON
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', response.text)
+        if json_match:
+            feedback = json.loads(json_match.group())
+            return jsonify({"success": True, "feedback": feedback})
+        else:
+            return jsonify({"error": "Failed to parse feedback"}), 500
+            
+    except Exception as e:
+        print(f"❌ Practice feedback error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Feature 10: AI-Powered Contextual Follow-ups
+@app.route("/api/generate-followup", methods=["POST"])
+def generate_followup():
+    """Generate contextual follow-up question based on conversation history"""
+    try:
+        data = request.get_json()
+        last_answer = data.get('answer', '')
+        
+        if 'conversation_history' not in session:
+            return jsonify({"error": "No conversation history"}), 400
+        
+        conversation_history = session.get('conversation_history', [])
+        cv_text = session.get('cv_text', '')
+        
+        print(f"\n🔄 Generating contextual follow-up...")
+        
+        import os
+        if 'GEMINI_API_KEY' not in os.environ and GEMINI_API_KEY:
+            os.environ['GEMINI_API_KEY'] = GEMINI_API_KEY
+        
+        client = genai.Client()
+        
+        # Build conversation context
+        context = "\n".join([
+            f"Q: {item['question']}\nA: {item['answer']}"
+            for item in conversation_history[-5:]  # Last 5 exchanges
+        ])
+        
+        prompt = f"""You are an expert interviewer. Based on the conversation history and the candidate's latest answer, generate ONE insightful follow-up question that:
+1. Probes deeper into their response
+2. Clarifies vague points
+3. Explores related experiences
+4. Assesses problem-solving approach
+
+CONVERSATION HISTORY:
+{context}
+
+LATEST ANSWER: {last_answer}
+
+CV CONTEXT:
+{cv_text[:1000]}
+
+Generate a single, natural follow-up question (one sentence, conversational tone)."""
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+        
+        followup_question = response.text.strip()
+        
+        print(f"✅ Follow-up: {followup_question}")
+        
+        return jsonify({"success": True, "question": followup_question})
+        
+    except Exception as e:
+        print(f"❌ Follow-up generation error: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":

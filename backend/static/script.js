@@ -10,16 +10,16 @@
 
   // ----------------- DOM -----------------
   const avatarID = document.getElementById("avatarID");
-  const voiceID = document.getElementById("voiceID");
-  const startBtn = document.getElementById("startBtn");
-  const closeBtn = document.getElementById("closeBtn");
-  const taskInput = document.getElementById("taskInput");
-  const talkBtn = document.getElementById("talkBtn");
   const mediaElement = document.getElementById("mediaElement");
-  const statusEl = document.getElementById("status");
-  const conversationState = document.getElementById("conversationState");
-  const evaluateBtn = document.getElementById("evaluateBtn");
   const userWebcam = document.getElementById("userWebcam");
+  const taskInput = document.getElementById("taskInput");
+  const startBtn = document.getElementById("startBtn");
+  const stopSpeakingBtn = document.getElementById("stopSpeakingBtn");
+  const closeBtn = document.getElementById("closeBtn");
+  const evaluateBtn = document.getElementById("evaluateBtn");
+  const conversationState = document.getElementById("conversationState");
+  const voiceID = document.getElementById("voiceID");
+  const statusEl = document.getElementById("status");
 
   // ----------------- STATE -----------------
   let sessionToken = null;
@@ -201,11 +201,11 @@
     analyser.getByteFrequencyData(dataArray);
 
     const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-    const isSilent = average < 5; // Lower threshold for better sensitivity (was 10)
+    const isSilent = average < 3; // Very low threshold to capture more audio
     
-    // Debug: Log audio levels occasionally
-    if (Math.random() < 0.05) { // 5% of the time
-      console.log(`Audio level: ${average.toFixed(2)}`);
+    // Debug: Log audio levels more frequently for troubleshooting
+    if (Math.random() < 0.1) { // 10% of the time
+      console.log(`🎤 Audio level: ${average.toFixed(2)} (threshold: 3, ${isSilent ? 'SILENT' : 'SPEAKING'})`);
     }
 
     if (isSilent) {
@@ -213,6 +213,7 @@
         const recordingDuration = Date.now() - recordingStartTime;
         if (recordingDuration > MIN_RECORDING_TIME) {
           silenceTimer = setTimeout(() => {
+            console.log("⏸️ Silence detected after speech, processing...");
             logStatus("Silence detected, processing speech...");
             stopListeningAndProcess();
           }, SILENCE_THRESHOLD);
@@ -223,6 +224,10 @@
       if (silenceTimer) {
         clearTimeout(silenceTimer);
         silenceTimer = null;
+      }
+      // Log when speech is detected
+      if (Math.random() < 0.05) {
+        console.log("🗣️ Speech detected!");
       }
     }
 
@@ -235,27 +240,53 @@
   async function startListening() {
     if (isListening || isSpeaking || !conversationActive) return;
     
+    // Show stop button when listening starts
+    if (stopSpeakingBtn) stopSpeakingBtn.style.display = 'flex';
+    
     try {
       recordedChunks = [];
       recordingStartTime = Date.now();
       
       if (!audioStream) {
-        // Request microphone with better constraints
-        audioStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: 16000
-          }
-        });
+        logStatus("🎤 Requesting microphone access...");
+        console.log("Requesting microphone permissions...");
         
-        // Set up audio analysis for VAD
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioContext.createMediaStreamSource(audioStream);
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 2048;
-        source.connect(analyser);
+        try {
+          // Request microphone with better constraints
+          audioStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: false,  // Disable to capture more audio
+              autoGainControl: true,
+              sampleRate: 44100  // Higher sample rate for better quality
+            }
+          });
+          
+          console.log("✅ Microphone access granted");
+          console.log("Audio tracks:", audioStream.getAudioTracks());
+          
+          // Check if audio track is enabled
+          const audioTrack = audioStream.getAudioTracks()[0];
+          if (audioTrack) {
+            console.log("Audio track settings:", audioTrack.getSettings());
+            console.log("Audio track enabled:", audioTrack.enabled);
+          }
+          
+          // Set up audio analysis for VAD
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          const source = audioContext.createMediaStreamSource(audioStream);
+          analyser = audioContext.createAnalyser();
+          analyser.fftSize = 2048;
+          analyser.smoothingTimeConstant = 0.3;  // Reduce smoothing for faster response
+          source.connect(analyser);
+          
+          logStatus("✅ Microphone initialized successfully");
+        } catch (micError) {
+          console.error("Microphone access error:", micError);
+          logStatus("❌ Microphone access denied or unavailable");
+          logStatus("   Please allow microphone access in browser settings");
+          throw micError;
+        }
       }
 
       // Try to use the best available audio format
@@ -268,16 +299,28 @@
       }
       console.log(`Using audio format: ${mimeType}`);
       
-      recorder = new MediaRecorder(audioStream, { mimeType });
+      recorder = new MediaRecorder(audioStream, { 
+        mimeType,
+        audioBitsPerSecond: 128000  // Set higher bitrate for better quality
+      });
       
       recorder.ondataavailable = (ev) => {
-        if (ev.data?.size > 0) recordedChunks.push(ev.data);
+        if (ev.data?.size > 0) {
+          recordedChunks.push(ev.data);
+          console.log(`Audio chunk received: ${ev.data.size} bytes`);
+        }
+      };
+      
+      recorder.onerror = (e) => {
+        console.error("MediaRecorder error:", e);
+        logStatus("❌ Recording error: " + e.error);
       };
 
-      recorder.start(200); // Collect data every 200ms (reduced for smaller chunks)
+      recorder.start(200); // Collect data every 200ms
       isListening = true;
       updateConversationState("🎤 Listening...");
       logStatus("👂 Listening for your response...");
+      console.log("🎤 MediaRecorder started");
       
       // Start silence detection
       detectSilence();
@@ -303,28 +346,35 @@
     await new Promise(resolve => {
       recorder.onstop = async () => {
         const blob = new Blob(recordedChunks, { type: "audio/webm" });
+        const totalChunks = recordedChunks.length;
         recordedChunks = [];
         
-        if (blob.size < 500) { // Reduced from 1000 to accept smaller audio clips
-          logStatus("Audio too short, resuming listening...");
-          if (conversationActive && !isSpeaking) {
-            setTimeout(() => startListening(), 500);
-          }
+        console.log(`📦 Audio blob created: ${blob.size} bytes from ${totalChunks} chunks`);
+        logStatus(`📦 Audio captured: ${blob.size} bytes from ${totalChunks} chunks`);
+        
+        if (blob.size < 50) {  // Further reduced minimum to 50 bytes
+          logStatus(`⚠️ Audio too short (${blob.size} bytes), resuming listening...`);
+          console.log(`⚠️ Audio blob size: ${blob.size} bytes (too small, minimum 50)`);
+          isSpeaking = false;
+          if (conversationActive) setTimeout(() => startListening(), 500);
           resolve();
           return;
         }
         
-        console.log(`Audio blob size: ${blob.size} bytes`);
+        console.log(`✅ Audio blob size: ${blob.size} bytes - sending to STT`);
+        console.log(`   Recording duration: ${Date.now() - recordingStartTime}ms`);
 
         try {
           isSpeaking = true;
           updateConversationState("🤖 Avatar thinking...");
           
           const sttResp = await postAudioToSTT(blob);
+          console.log("STT Response:", sttResp);
           const userText = (sttResp?.text || "").trim();
           
           if (!userText) {
-            logStatus("No speech detected, resuming listening...");
+            logStatus(`⚠️ No speech detected in audio (STT response: ${JSON.stringify(sttResp)})`);
+            logStatus("💡 Try speaking louder or check microphone settings");
             isSpeaking = false;
             if (conversationActive) {
               setTimeout(() => startListening(), 500);
@@ -360,8 +410,8 @@
               updateConversationState("🗣️ Avatar speaking...");
               await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
               
-              // Wait for avatar to finish speaking (estimate based on text length)
-              const speakingDuration = Math.max(3000, botText.length * 80); // ~80ms per character
+              // Wait for avatar to finish speaking (optimized for speed)
+              const speakingDuration = Math.max(2000, botText.length * 60); // ~60ms per character (faster)
               await new Promise(r => setTimeout(r, speakingDuration));
             }
           }
@@ -423,7 +473,24 @@
       audioContext = null;
     }
     
+    // Hide stop button when listening stops
+    if (stopSpeakingBtn) stopSpeakingBtn.style.display = 'none';
+    
     updateConversationState("⏸️ Conversation paused");
+  }
+
+  // Manual stop speaking function
+  async function manualStopSpeaking() {
+    if (!isListening || !recorder) {
+      logStatus("⚠️ Not currently listening");
+      return;
+    }
+    
+    const recordingDuration = Date.now() - recordingStartTime;
+    logStatus(`🛑 Manual stop - processing your speech... (recorded ${recordingDuration}ms, ${recordedChunks.length} chunks)`);
+    
+    // Immediately trigger processing
+    stopListeningAndProcess();
   }
 
   // ----------------- Controls -----------------
@@ -634,8 +701,227 @@
     }
   }
 
+  // ----------------- NEW FEATURES -----------------
+  
+  // Microphone Test
+  const micTestBtn = document.getElementById("micTestBtn");
+  const micTestResult = document.getElementById("micTestResult");
+  const micTranscript = document.getElementById("micTranscript");
+  const transcriptText = document.getElementById("transcriptText");
+  
+  micTestBtn?.addEventListener("click", async () => {
+    try {
+      micTestBtn.disabled = true;
+      micTestBtn.innerHTML = '<svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Testing...';
+      micTestResult.style.display = 'block';
+      micTestResult.textContent = 'Requesting microphone access...';
+      micTestResult.className = 'text-xs text-center py-2 text-yellow-400';
+      micTranscript.style.display = 'block';
+      transcriptText.textContent = 'Waiting for audio...';
+      
+      // Request microphone
+      const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micTestResult.textContent = '✅ Microphone access granted!';
+      micTestResult.className = 'text-xs text-center py-2 text-green-400';
+      
+      // Set up recording
+      const testRecorder = new MediaRecorder(testStream, { mimeType: 'audio/webm' });
+      const testChunks = [];
+      testRecorder.ondataavailable = (ev) => {
+        if (ev.data?.size > 0) testChunks.push(ev.data);
+      };
+      
+      // Test audio levels
+      const testContext = new (window.AudioContext || window.webkitAudioContext)();
+      const testSource = testContext.createMediaStreamSource(testStream);
+      const testAnalyser = testContext.createAnalyser();
+      testAnalyser.fftSize = 2048;
+      testSource.connect(testAnalyser);
+      
+      micTestResult.textContent = '🎤 Speak now to test (5 seconds)...';
+      micTestResult.className = 'text-xs text-center py-2 text-blue-400';
+      transcriptText.textContent = 'Recording...';
+      
+      // Start recording
+      testRecorder.start(200);
+      
+      // Monitor audio for 3 seconds
+      let maxLevel = 0;
+      const monitorInterval = setInterval(() => {
+        const dataArray = new Uint8Array(testAnalyser.frequencyBinCount);
+        testAnalyser.getByteFrequencyData(dataArray);
+        const level = dataArray.reduce((a, b) => a + b) / dataArray.length;
+        maxLevel = Math.max(maxLevel, level);
+        micTestResult.textContent = `🎤 Audio level: ${level.toFixed(1)} (max: ${maxLevel.toFixed(1)})`;
+      }, 100);
+      
+      setTimeout(async () => {
+        clearInterval(monitorInterval);
+        testRecorder.stop();
+        
+        testRecorder.onstop = async () => {
+          testStream.getTracks().forEach(t => t.stop());
+          testContext.close();
+          
+          if (maxLevel > 3) {
+            micTestResult.textContent = `✅ Microphone working! Max level: ${maxLevel.toFixed(1)}`;
+            micTestResult.className = 'text-xs text-center py-2 text-green-400';
+            logStatus(`✅ Microphone test passed (max level: ${maxLevel.toFixed(1)})`);
+            
+            // Transcribe audio
+            transcriptText.textContent = 'Transcribing...';
+            transcriptText.className = 'text-yellow-300 italic';
+            
+            try {
+              const audioBlob = new Blob(testChunks, { type: 'audio/webm' });
+              const fd = new FormData();
+              fd.append("audio", audioBlob, "test.webm");
+              const sttRes = await fetch(`${BACKEND_BASE}/stt`, { method: "POST", body: fd });
+              const sttData = await sttRes.json();
+              
+              if (sttData.text && sttData.text.trim()) {
+                transcriptText.textContent = `"${sttData.text}"`;
+                transcriptText.className = 'text-green-300';
+                logStatus(`📝 Transcript: ${sttData.text}`);
+                
+                // Hide transcript after 10 seconds
+                setTimeout(() => {
+                  micTranscript.style.display = 'none';
+                }, 10000);
+              } else {
+                transcriptText.textContent = 'No speech detected in audio';
+                transcriptText.className = 'text-gray-400 italic';
+                
+                // Hide after 10 seconds
+                setTimeout(() => {
+                  micTranscript.style.display = 'none';
+                }, 10000);
+              }
+            } catch (e) {
+              transcriptText.textContent = `Transcription error: ${e.message}`;
+              transcriptText.className = 'text-red-400';
+              
+              // Hide after 10 seconds
+              setTimeout(() => {
+                micTranscript.style.display = 'none';
+              }, 10000);
+            }
+          } else {
+            micTestResult.textContent = `⚠️ No audio detected. Check microphone volume. Max: ${maxLevel.toFixed(1)}`;
+            micTestResult.className = 'text-xs text-center py-2 text-red-400';
+            transcriptText.textContent = 'No audio detected';
+            transcriptText.className = 'text-gray-400 italic';
+            logStatus(`⚠️ Microphone test failed - no audio detected`);
+          }
+          
+          micTestBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg> Test Microphone';
+          micTestBtn.disabled = false;
+        };
+      }, 5000);
+      
+    } catch (error) {
+      console.error("Microphone test error:", error);
+      micTestResult.textContent = `❌ Error: ${error.message}`;
+      micTestResult.className = 'text-xs text-center py-2 text-red-400';
+      micTestResult.style.display = 'block';
+      logStatus(`❌ Microphone test error: ${error.message}`);
+      
+      micTestBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg> Test Microphone';
+      micTestBtn.disabled = false;
+    }
+  });
+  
+  // Coding Assessment
+  const codingBtn = document.getElementById("codingBtn");
+  codingBtn?.addEventListener("click", () => {
+    window.location.href = '/coding-assessment';
+  });
+  
+  // Body Language Analysis
+  const bodyLanguageBtn = document.getElementById("bodyLanguageBtn");
+  const bodyLanguageScores = document.getElementById("bodyLanguageScores");
+  const postureScore = document.getElementById("postureScore");
+  const eyeContactScore = document.getElementById("eyeContactScore");
+  const confidenceLevel = document.getElementById("confidenceLevel");
+  const facialExpression = document.getElementById("facialExpression");
+  let bodyLanguageInterval = null;
+  
+  function updateBodyLanguageUI(analysis) {
+    if (!analysis) return;
+    
+    // Update scores
+    postureScore.textContent = `${analysis.posture_score}/100`;
+    eyeContactScore.textContent = `${analysis.eye_contact_score}/100`;
+    confidenceLevel.textContent = analysis.confidence_level;
+    facialExpression.textContent = analysis.facial_expression;
+    
+    // Color code based on scores
+    postureScore.className = analysis.posture_score >= 80 ? 'font-bold text-green-400' : 
+                             analysis.posture_score >= 60 ? 'font-bold text-yellow-400' : 
+                             'font-bold text-red-400';
+    
+    eyeContactScore.className = analysis.eye_contact_score >= 80 ? 'font-bold text-green-400' : 
+                                analysis.eye_contact_score >= 60 ? 'font-bold text-yellow-400' : 
+                                'font-bold text-red-400';
+  }
+  
+  bodyLanguageBtn?.addEventListener("click", async () => {
+    if (bodyLanguageInterval) {
+      // Stop analysis
+      clearInterval(bodyLanguageInterval);
+      bodyLanguageInterval = null;
+      bodyLanguageBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Body Language Score';
+      bodyLanguageBtn.classList.remove('bg-green-600');
+      bodyLanguageScores.style.display = 'none';
+      logStatus("🛑 Body language analysis stopped");
+    } else {
+      // Start analysis
+      bodyLanguageBtn.innerHTML = '<svg class="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Analyzing...';
+      bodyLanguageBtn.classList.add('bg-green-600');
+      bodyLanguageScores.style.display = 'block';
+      logStatus("👁️ Body language analysis started (demo mode)...");
+      
+      // Initial analysis
+      try {
+        const response = await fetch(`${BACKEND_BASE}/api/analyze-body-language`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          updateBodyLanguageUI(result.analysis);
+          logStatus(`📊 Body Language: Posture ${result.analysis.posture_score}/100, Eye Contact ${result.analysis.eye_contact_score}/100, Confidence: ${result.analysis.confidence_level}`);
+        }
+      } catch (e) {
+        console.error("Body language analysis error:", e);
+      }
+      
+      // Analyze every 10 seconds
+      bodyLanguageInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`${BACKEND_BASE}/api/analyze-body-language`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          
+          const result = await response.json();
+          
+          if (result.success) {
+            updateBodyLanguageUI(result.analysis);
+            logStatus(`📊 Body Language: Posture ${result.analysis.posture_score}/100, Eye Contact ${result.analysis.eye_contact_score}/100, Confidence: ${result.analysis.confidence_level}`);
+          }
+        } catch (e) {
+          console.error("Body language analysis error:", e);
+        }
+      }, 10000);
+    }
+  });
+
   // ----------------- Event wiring -----------------
   startBtn?.addEventListener("click", startSessionFlow);
+  stopSpeakingBtn?.addEventListener("click", manualStopSpeaking);
   closeBtn?.addEventListener("click", stopSessionFlow);
   talkBtn?.addEventListener("click", onTalkClick);
   evaluateBtn?.addEventListener("click", evaluateAndGenerateReport);
@@ -644,4 +930,6 @@
   startUserWebcam();
 
   logStatus("🎯 UI ready. Click 'Start Session' to begin live conversation!");
+  logStatus("🤖 AI Features: Auto CV-based questions, Contextual follow-ups, Body language analysis");
+  logStatus("💡 Questions will be automatically generated from candidate's resume");
 })();
