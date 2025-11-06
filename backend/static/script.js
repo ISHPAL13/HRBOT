@@ -5,8 +5,8 @@
   // ----------------- CONFIG -----------------
   const BACKEND_BASE = window.location.origin; 
   const HEYGEN_API_BASE = "https://api.heygen.com";
-  const SILENCE_THRESHOLD = 1200; // ms of silence before sending audio (reduced for faster response)
-  const MIN_RECORDING_TIME = 400; // minimum recording duration (reduced)
+  const SILENCE_THRESHOLD = 800; // ms of silence before sending audio (optimized for faster response)
+  const MIN_RECORDING_TIME = 300; // minimum recording duration (optimized)
 
   // ----------------- DOM -----------------
   const avatarID = document.getElementById("avatarID");
@@ -36,6 +36,12 @@
   let silenceTimer = null;
   let recordingStartTime = 0;
   let conversationActive = false;
+  
+  // WebSocket state
+  let ws = null;
+  let wsConnected = false;
+  let wsReconnectAttempts = 0;
+  const MAX_WS_RECONNECT = 3;
 
   // ----------------- UTIL -----------------
   function logStatus(msg) {
@@ -47,6 +53,143 @@
 
   function safeJson(res) {
     return res.json().catch(() => ({}));
+  }
+  
+  // Helper to get session ID from cookies
+  function getSessionIdFromCookie() {
+    const cookies = document.cookie.split(';');
+    for (let cookie of cookies) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === 'session_id') {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  // ----------------- WebSocket helpers -----------------
+  function connectWebSocket() {
+    return new Promise((resolve, reject) => {
+      try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/interview`;
+        
+        logStatus("🔌 Connecting to WebSocket...");
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+          logStatus("✅ WebSocket connected");
+          wsConnected = true;
+          wsReconnectAttempts = 0;
+          
+          // Initialize session
+          const sessionId = getSessionIdFromCookie();
+          if (sessionId) {
+            ws.send(JSON.stringify({
+              action: "init",
+              session_id: sessionId
+            }));
+          }
+          
+          resolve();
+        };
+        
+        ws.onmessage = (event) => {
+          handleWebSocketMessage(JSON.parse(event.data));
+        };
+        
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          logStatus("⚠️ WebSocket error, will use HTTP fallback");
+          wsConnected = false;
+          reject(error);
+        };
+        
+        ws.onclose = () => {
+          logStatus("🔌 WebSocket disconnected");
+          wsConnected = false;
+          
+          // Auto-reconnect if conversation is active
+          if (conversationActive && wsReconnectAttempts < MAX_WS_RECONNECT) {
+            wsReconnectAttempts++;
+            logStatus(`🔄 Reconnecting WebSocket (attempt ${wsReconnectAttempts})...`);
+            setTimeout(() => connectWebSocket(), 2000);
+          }
+        };
+        
+      } catch (error) {
+        console.error("WebSocket connection error:", error);
+        wsConnected = false;
+        reject(error);
+      }
+    });
+  }
+  
+  // WebSocket message handlers
+  const wsCallbacks = {};
+  let wsMessageId = 0;
+  
+  function handleWebSocketMessage(message) {
+    const action = message.action;
+    
+    if (action === "init_success") {
+      console.log("✅ WebSocket session initialized");
+    } else if (action === "stt_response") {
+      if (wsCallbacks.stt) {
+        wsCallbacks.stt(message);
+        delete wsCallbacks.stt;
+      }
+    } else if (action === "llm_response") {
+      if (wsCallbacks.llm) {
+        wsCallbacks.llm(message);
+        delete wsCallbacks.llm;
+      }
+    } else if (action === "error") {
+      console.error("WebSocket error:", message.error);
+    }
+  }
+  
+  // Send audio to STT via WebSocket
+  async function sendAudioViaWebSocket(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64Audio = reader.result.split(',')[1]; // Remove data:audio/webm;base64, prefix
+        
+        wsCallbacks.stt = (response) => {
+          if (response.error) {
+            reject(new Error(response.error));
+          } else {
+            resolve({ text: response.text });
+          }
+        };
+        
+        ws.send(JSON.stringify({
+          action: "stt",
+          audio: base64Audio
+        }));
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+  
+  // Send prompt to LLM via WebSocket
+  async function sendPromptViaWebSocket(prompt) {
+    return new Promise((resolve, reject) => {
+      wsCallbacks.llm = (response) => {
+        if (response.error) {
+          resolve({ text: response.text, error: response.error });
+        } else {
+          resolve({ text: response.text });
+        }
+      };
+      
+      ws.send(JSON.stringify({
+        action: "llm",
+        prompt: prompt
+      }));
+    });
   }
 
   // ----------------- HeyGen / Backend helpers -----------------
@@ -175,7 +318,20 @@
 
   // ----------------- STT + LLM helpers -----------------
   async function postAudioToSTT(blob) {
-    logStatus("Uploading audio to backend STT...");
+    // Use WebSocket if connected, otherwise fallback to HTTP
+    if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+      logStatus("📤 Sending audio via WebSocket...");
+      try {
+        return await sendAudioViaWebSocket(blob);
+      } catch (error) {
+        logStatus("⚠️ WebSocket STT failed, using HTTP fallback");
+        console.error("WebSocket STT error:", error);
+        // Fall through to HTTP
+      }
+    }
+    
+    // HTTP fallback
+    logStatus("Uploading audio to backend STT (HTTP)...");
     const fd = new FormData();
     fd.append("audio", blob, "clip.webm");
     const res = await fetch(`${BACKEND_BASE}/stt`, { method: "POST", body: fd });
@@ -183,7 +339,20 @@
   }
 
   async function postPromptToLLM(prompt) {
-    logStatus("Calling backend LLM (Gemini)...");
+    // Use WebSocket if connected, otherwise fallback to HTTP
+    if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+      logStatus("🤖 Sending prompt via WebSocket...");
+      try {
+        return await sendPromptViaWebSocket(prompt);
+      } catch (error) {
+        logStatus("⚠️ WebSocket LLM failed, using HTTP fallback");
+        console.error("WebSocket LLM error:", error);
+        // Fall through to HTTP
+      }
+    }
+    
+    // HTTP fallback
+    logStatus("Calling backend LLM (Gemini - HTTP)...");
     const res = await fetch(`${BACKEND_BASE}/llm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -411,7 +580,7 @@
               await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
               
               // Wait for avatar to finish speaking (optimized for speed)
-              const speakingDuration = Math.max(2000, botText.length * 60); // ~60ms per character (faster)
+              const speakingDuration = Math.max(1500, botText.length * 40); // ~40ms per character (faster)
               await new Promise(r => setTimeout(r, speakingDuration));
             }
           }
@@ -421,7 +590,7 @@
           // Auto-resume listening for next turn
           if (conversationActive) {
             logStatus("✅ Ready for your response...");
-            setTimeout(() => startListening(), 800);
+            setTimeout(() => startListening(), 300);
           }
           
         } catch (e) {
@@ -514,6 +683,13 @@
       // Show evaluate button after session starts
       if (evaluateBtn) evaluateBtn.style.display = 'flex';
       
+      // Connect WebSocket for faster communication
+      try {
+        await connectWebSocket();
+      } catch (error) {
+        logStatus("⚠️ WebSocket unavailable, using HTTP (slower)");
+      }
+      
       sessionToken = await requestSessionTokenFromBackend();
       sessionInfo = await heygenCreateSession(sessionToken);
       await heygenStartSession(sessionInfo.session_id, sessionToken);
@@ -533,7 +709,7 @@
       setTimeout(() => {
         isSpeaking = false;
         startListening();
-      }, 6000);
+      }, 4000);
       
     } catch (e) {
       logStatus("Start error: " + e);
@@ -545,6 +721,13 @@
   async function stopSessionFlow() {
     conversationActive = false;
     stopListening();
+    
+    // Close WebSocket connection
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.close();
+      logStatus("🔌 WebSocket closed");
+    }
+    wsConnected = false;
     
     if (sessionInfo && sessionToken) await heygenStopSession(sessionInfo.session_id, sessionToken);
     if (room) { try { room.disconnect(); } catch {} room = null; }
@@ -660,7 +843,7 @@
       
       // Resume listening if conversation is active
       if (conversationActive) {
-        setTimeout(() => startListening(), 800);
+        setTimeout(() => startListening(), 300);
       }
     } catch (e) {
       logStatus("Manual input error: " + e);

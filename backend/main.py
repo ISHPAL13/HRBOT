@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends, Response
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import requests, os, tempfile, shutil
 import PyPDF2
+import base64
 from google import genai
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib import colors
@@ -105,28 +106,28 @@ TONE: Professional & Neutral
 - Be polite, business-like, and respectful
 - Ask standard interview questions
 - Keep responses clear and direct
-- Reply in ONE short sentence (10-15 words max)""",
+- Reply in ONE short sentence (8-12 words max)""",
         
         'friendly': """
 TONE: Friendly & Encouraging  
 - Be warm, supportive, and encouraging
 - Use positive language and show enthusiasm
 - Make the candidate feel comfortable
-- Reply in ONE short sentence (10-15 words max)""",
+- Reply in ONE short sentence (8-12 words max)""",
         
         'strict': """
 TONE: Strict & Demanding
 - Be critical and challenge their responses
 - Ask tough follow-up questions
 - Point out gaps or weaknesses professionally
-- Reply in ONE short sentence (10-15 words max)""",
+- Reply in ONE short sentence (8-12 words max)""",
         
         'casual': """
 TONE: Casual & Relaxed
 - Be conversational and laid-back
 - Use informal language (but still professional)
 - Keep the atmosphere relaxed
-- Reply in ONE short sentence (10-15 words max)"""
+- Reply in ONE short sentence (8-12 words max)"""
     }
     
     return base_context + "\n" + tone_styles.get(tone, tone_styles['professional'])
@@ -419,12 +420,12 @@ async def llm(request: Request):
 
 CANDIDATE'S RESPONSE: {user_input}
 
-Generate your next question or response. Keep it to ONE short sentence (10-15 words max)."""
+IMPORTANT: Reply with ONE concise sentence (8-12 words). Be direct and natural."""
         
         print(f"📤 Sending to Gemini...")
         
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash",
             contents=full_prompt
         )
         
@@ -447,6 +448,200 @@ Generate your next question or response. Keep it to ONE short sentence (10-15 wo
         print(f"❌ LLM error: {e}")
         error_msg = "I'm having trouble processing that. Could you rephrase?"
         return {"text": error_msg, "error": str(e)}
+
+@app.websocket("/ws/interview")
+async def websocket_interview(websocket: WebSocket):
+    """WebSocket endpoint for real-time STT and LLM communication"""
+    await websocket.accept()
+    print("🔌 WebSocket connection established")
+    
+    # Get session from query params or initial message
+    session_id = None
+    
+    try:
+        while True:
+            # Receive message from client
+            message = await websocket.receive_json()
+            action = message.get("action")
+            
+            print(f"📨 WebSocket received action: {action}")
+            
+            # Handle session initialization
+            if action == "init":
+                # Get session from cookies (sent in initial message)
+                session_id = message.get("session_id")
+                if not session_id or session_id not in SESSION_STORE:
+                    await websocket.send_json({
+                        "action": "error",
+                        "error": "Invalid session"
+                    })
+                    continue
+                
+                print(f"✅ WebSocket session initialized: {session_id}")
+                await websocket.send_json({
+                    "action": "init_success",
+                    "message": "WebSocket connected"
+                })
+            
+            # Handle STT request
+            elif action == "stt":
+                try:
+                    # Receive base64 encoded audio
+                    audio_base64 = message.get("audio")
+                    if not audio_base64:
+                        await websocket.send_json({
+                            "action": "stt_response",
+                            "error": "No audio data"
+                        })
+                        continue
+                    
+                    # Decode audio
+                    audio_data = base64.b64decode(audio_base64)
+                    
+                    print(f"📤 WebSocket STT: Processing {len(audio_data)} bytes")
+                    
+                    # Send to Deepgram
+                    headers = {
+                        "Authorization": f"Token {DEEPGRAM_API_KEY}",
+                        "Content-Type": "audio/webm"
+                    }
+                    
+                    params = {
+                        "model": "nova-2",
+                        "language": "en-US",
+                        "smart_format": "true",
+                        "punctuate": "true"
+                    }
+                    
+                    response = requests.post(
+                        "https://api.deepgram.com/v1/listen",
+                        headers=headers,
+                        params=params,
+                        data=audio_data,
+                        timeout=10
+                    )
+                    
+                    if response.status_code != 200:
+                        await websocket.send_json({
+                            "action": "stt_response",
+                            "error": f"Deepgram error: {response.status_code}"
+                        })
+                        continue
+                    
+                    result = response.json()
+                    transcript = ""
+                    if result.get("results") and result["results"].get("channels"):
+                        alternatives = result["results"]["channels"][0].get("alternatives", [])
+                        if alternatives:
+                            transcript = alternatives[0].get("transcript", "").strip()
+                    
+                    print(f"📝 WebSocket STT result: '{transcript}'")
+                    
+                    await websocket.send_json({
+                        "action": "stt_response",
+                        "text": transcript
+                    })
+                    
+                except Exception as e:
+                    print(f"❌ WebSocket STT error: {e}")
+                    await websocket.send_json({
+                        "action": "stt_response",
+                        "error": str(e)
+                    })
+            
+            # Handle LLM request
+            elif action == "llm":
+                try:
+                    if not session_id or session_id not in SESSION_STORE:
+                        await websocket.send_json({
+                            "action": "llm_response",
+                            "error": "No active session"
+                        })
+                        continue
+                    
+                    user_input = message.get("prompt", "")
+                    print(f"🤖 WebSocket LLM: Processing '{user_input}'")
+                    
+                    session_data = get_session_data(session_id)
+                    
+                    # Set API key
+                    if 'GEMINI_API_KEY' not in os.environ and GEMINI_API_KEY:
+                        os.environ['GEMINI_API_KEY'] = GEMINI_API_KEY
+                    
+                    client = genai.Client()
+                    
+                    # Get user context
+                    cv_text = session_data.get('cv_text', '')
+                    user_name = session_data.get('user_name', 'Candidate')
+                    tone = session_data.get('interviewer_tone', 'professional')
+                    
+                    # Build prompt
+                    system_prompt = get_tone_prompt(tone, cv_text, user_name)
+                    conversation_history = session_data.get('conversation_history', [])
+                    
+                    context = ""
+                    if conversation_history:
+                        recent = conversation_history[-3:]
+                        context = "\n".join([
+                            f"Q: {item['question']}\nA: {item['answer']}"
+                            for item in recent
+                        ])
+                        context = f"\n\nRECENT CONVERSATION:\n{context}\n"
+                    
+                    full_prompt = f"""{system_prompt}
+
+{context}
+
+CANDIDATE'S RESPONSE: {user_input}
+
+IMPORTANT: Reply with ONE concise sentence (8-12 words). Be direct and natural."""
+                    
+                    # Generate response
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=full_prompt
+                    )
+                    
+                    bot_response = response.text.strip()
+                    
+                    # Store in conversation history
+                    conversation_history.append({
+                        "question": bot_response,
+                        "answer": user_input,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    session_data['conversation_history'] = conversation_history
+                    save_session(session_id, session_data)
+                    
+                    print(f"✅ WebSocket LLM response: {bot_response}")
+                    
+                    await websocket.send_json({
+                        "action": "llm_response",
+                        "text": bot_response
+                    })
+                    
+                except Exception as e:
+                    print(f"❌ WebSocket LLM error: {e}")
+                    await websocket.send_json({
+                        "action": "llm_response",
+                        "text": "I'm having trouble processing that. Could you rephrase?",
+                        "error": str(e)
+                    })
+            
+            else:
+                await websocket.send_json({
+                    "action": "error",
+                    "error": f"Unknown action: {action}"
+                })
+                
+    except WebSocketDisconnect:
+        print("🔌 WebSocket disconnected")
+    except Exception as e:
+        print(f"❌ WebSocket error: {e}")
+        try:
+            await websocket.close()
+        except:
+            pass
 
 @app.get("/coding-assessment", response_class=HTMLResponse)
 async def coding_assessment(request: Request):
@@ -665,7 +860,7 @@ Be specific and reference actual examples from the interview transcript and resu
         print("📤 Sending evaluation request to Gemini...")
         
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash",
             contents=evaluation_prompt
         )
         
