@@ -98,36 +98,47 @@ def get_tone_prompt(tone, cv_text, user_name):
 CANDIDATE'S CV SUMMARY:
 {cv_text[:1500]}  
 
-Based on their CV, ask relevant questions about their experience, skills, and background."""
+INTERVIEW GUIDELINES:
+- Ask diverse questions covering different aspects: technical skills, projects, experience, soft skills, challenges faced
+- NEVER repeat similar questions or ask about the same topic twice
+- Move naturally between topics: projects → skills → teamwork → problem-solving → future goals
+- Build on their previous answers with NEW follow-up questions
+- If they mention something interesting, explore that instead of asking generic questions
+- Vary your question types: "What", "How", "Why", "Tell me about", "Describe", "What would you do if"
+- Keep the conversation flowing naturally like a real interview"""
 
     tone_styles = {
         'professional': """
 TONE: Professional & Neutral
 - Be polite, business-like, and respectful
-- Ask standard interview questions
+- Ask insightful questions that assess competency
 - Keep responses clear and direct
-- Reply in ONE short sentence (8-12 words max)""",
+- Reply in ONE short sentence (8-12 words max)
+- Focus on skills, achievements, and problem-solving abilities""",
         
         'friendly': """
 TONE: Friendly & Encouraging  
 - Be warm, supportive, and encouraging
 - Use positive language and show enthusiasm
 - Make the candidate feel comfortable
-- Reply in ONE short sentence (8-12 words max)""",
+- Reply in ONE short sentence (8-12 words max)
+- Ask about their passions, learning experiences, and growth""",
         
         'strict': """
 TONE: Strict & Demanding
 - Be critical and challenge their responses
-- Ask tough follow-up questions
+- Ask tough follow-up questions that probe deeper
 - Point out gaps or weaknesses professionally
-- Reply in ONE short sentence (8-12 words max)""",
+- Reply in ONE short sentence (8-12 words max)
+- Test their knowledge and decision-making under pressure""",
         
         'casual': """
 TONE: Casual & Relaxed
 - Be conversational and laid-back
 - Use informal language (but still professional)
 - Keep the atmosphere relaxed
-- Reply in ONE short sentence (8-12 words max)"""
+- Reply in ONE short sentence (8-12 words max)
+- Ask about real-world scenarios and practical experiences"""
     }
     
     return base_context + "\n" + tone_styles.get(tone, tone_styles['professional'])
@@ -422,7 +433,7 @@ CANDIDATE'S RESPONSE: {user_input}
 
 IMPORTANT: Reply with ONE concise sentence (8-12 words). Be direct and natural."""
         
-        print(f"📤 Sending to Gemini...")
+        print(f"📤 Sending to Gemini 2.5 Flash...")
         
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -455,8 +466,12 @@ async def websocket_interview(websocket: WebSocket):
     await websocket.accept()
     print("🔌 WebSocket connection established")
     
-    # Get session from query params or initial message
+    # Try to get session from cookies
     session_id = None
+    cookies = websocket.cookies
+    if 'session_id' in cookies:
+        session_id = cookies['session_id']
+        print(f"✅ Got session_id from WebSocket cookies: {session_id}")
     
     try:
         while True:
@@ -551,8 +566,12 @@ async def websocket_interview(websocket: WebSocket):
             
             # Handle LLM request
             elif action == "llm":
+                print(f"\n📨 Received LLM request via WebSocket")
+                print(f"   Action: {action}")
+                print(f"   Message keys: {list(message.keys())}")
                 try:
                     if not session_id or session_id not in SESSION_STORE:
+                        print(f"   ❌ Session validation failed: session_id={session_id}, exists={session_id in SESSION_STORE}")
                         await websocket.send_json({
                             "action": "llm_response",
                             "error": "No active session"
@@ -561,8 +580,10 @@ async def websocket_interview(websocket: WebSocket):
                     
                     user_input = message.get("prompt", "")
                     print(f"🤖 WebSocket LLM: Processing '{user_input}'")
+                    print(f"   Session ID: {session_id}")
                     
                     session_data = get_session_data(session_id)
+                    print(f"   Session data keys: {list(session_data.keys())}")
                     
                     # Set API key
                     if 'GEMINI_API_KEY' not in os.environ and GEMINI_API_KEY:
@@ -597,12 +618,20 @@ CANDIDATE'S RESPONSE: {user_input}
 IMPORTANT: Reply with ONE concise sentence (8-12 words). Be direct and natural."""
                     
                     # Generate response
+                    print(f"   Calling Gemini 2.5 Flash with prompt length: {len(full_prompt)}")
+                    
                     response = client.models.generate_content(
                         model="gemini-2.5-flash",
                         contents=full_prompt
                     )
                     
                     bot_response = response.text.strip()
+                    print(f"   Gemini raw response: '{bot_response}'")
+                    print(f"   Response length: {len(bot_response)}")
+                    
+                    if not bot_response:
+                        print(f"   ⚠️ WARNING: Empty response from Gemini!")
+                        print(f"   Response object: {response}")
                     
                     # Store in conversation history
                     conversation_history.append({
@@ -622,11 +651,17 @@ IMPORTANT: Reply with ONE concise sentence (8-12 words). Be direct and natural."
                     
                 except Exception as e:
                     print(f"❌ WebSocket LLM error: {e}")
-                    await websocket.send_json({
-                        "action": "llm_response",
-                        "text": "I'm having trouble processing that. Could you rephrase?",
-                        "error": str(e)
-                    })
+                    import traceback
+                    print(f"   Full traceback:")
+                    traceback.print_exc()
+                    try:
+                        await websocket.send_json({
+                            "action": "llm_response",
+                            "text": "I'm having trouble processing that. Could you rephrase?",
+                            "error": str(e)
+                        })
+                    except:
+                        print(f"   ❌ Failed to send error response")
             
             else:
                 await websocket.send_json({
@@ -857,7 +892,7 @@ SCORING CRITERIA:
 
 Be specific and reference actual examples from the interview transcript and resume."""
 
-        print("📤 Sending evaluation request to Gemini...")
+        print("📤 Sending evaluation request to Gemini 2.5 Flash...")
         
         response = client.models.generate_content(
             model="gemini-2.5-flash",

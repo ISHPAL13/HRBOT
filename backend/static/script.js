@@ -20,6 +20,8 @@
   const conversationState = document.getElementById("conversationState");
   const voiceID = document.getElementById("voiceID");
   const statusEl = document.getElementById("status");
+  const liveTranscriptBox = document.getElementById("liveTranscriptBox");
+  const liveTranscript = document.getElementById("liveTranscript");
 
   // ----------------- STATE -----------------
   let sessionToken = null;
@@ -42,6 +44,13 @@
   let wsConnected = false;
   let wsReconnectAttempts = 0;
   const MAX_WS_RECONNECT = 3;
+  
+  // Deepgram live streaming state
+  let deepgramConnection = null;
+  let deepgramApiKey = null;
+  let isDeepgramConnected = false;
+  let lastTranscript = '';
+  let transcriptTimer = null;
 
   // ----------------- UTIL -----------------
   function logStatus(msg) {
@@ -58,12 +67,16 @@
   // Helper to get session ID from cookies
   function getSessionIdFromCookie() {
     const cookies = document.cookie.split(';');
+    console.log('🍪 All cookies:', document.cookie);
     for (let cookie of cookies) {
       const [name, value] = cookie.trim().split('=');
+      console.log(`   Cookie: ${name} = ${value}`);
       if (name === 'session_id') {
+        console.log(`✅ Found session_id: ${value}`);
         return value;
       }
     }
+    console.log('⚠️ session_id cookie not found');
     return null;
   }
 
@@ -77,18 +90,36 @@
         logStatus("🔌 Connecting to WebSocket...");
         ws = new WebSocket(wsUrl);
         
-        ws.onopen = () => {
-          logStatus("✅ WebSocket connected");
+        ws.onopen = async () => {
+          console.log("✅ WebSocket connected");
           wsConnected = true;
           wsReconnectAttempts = 0;
           
           // Initialize session
-          const sessionId = getSessionIdFromCookie();
+          let sessionId = getSessionIdFromCookie();
+          
+          // Fallback: Get session ID from user info API
+          if (!sessionId) {
+            console.log('⚠️ No session cookie, fetching from API...');
+            try {
+              const res = await fetch(`${BACKEND_BASE}/api/user-info`);
+              const data = await res.json();
+              // The session ID is in the Set-Cookie header, but we can't access it directly
+              // So we'll just send the init without session_id and let backend handle it
+              console.log('📋 User info:', data);
+            } catch (e) {
+              console.error('Failed to get user info:', e);
+            }
+          }
+          
           if (sessionId) {
+            console.log(`📤 Sending init with session_id: ${sessionId}`);
             ws.send(JSON.stringify({
               action: "init",
               session_id: sessionId
             }));
+          } else {
+            console.log('⚠️ Could not get session_id, WebSocket may not work properly');
           }
           
           resolve();
@@ -190,6 +221,198 @@
         prompt: prompt
       }));
     });
+  }
+
+  // ----------------- Deepgram Live Streaming -----------------
+  async function initDeepgramLiveStreaming() {
+    try {
+      // Get Deepgram API key from backend
+      if (!deepgramApiKey) {
+        const res = await fetch(`${BACKEND_BASE}/deepgram/api-key`);
+        const data = await res.json();
+        deepgramApiKey = data.api_key;
+      }
+
+      // Check if Deepgram SDK is loaded
+      if (!window.deepgram || !window.deepgram.createClient) {
+        console.error('Deepgram SDK not loaded');
+        return false;
+      }
+
+      // Create Deepgram client
+      const deepgram = window.deepgram.createClient(deepgramApiKey);
+
+      // Create live transcription connection
+      deepgramConnection = deepgram.listen.live({
+        model: "nova-2",
+        language: "en-US",
+        smart_format: true,
+        interim_results: true,
+        endpointing: 1500, // ms of silence to detect end of speech (1.5 seconds for natural pauses)
+        vad_events: true, // Enable voice activity detection events
+      });
+
+      // Set up event listeners
+      deepgramConnection.on(window.deepgram.LiveTranscriptionEvents.Open, () => {
+        console.log('✅ Deepgram live connection opened');
+        isDeepgramConnected = true;
+        logStatus("✅ Real-time transcription connected");
+      });
+
+      deepgramConnection.on(window.deepgram.LiveTranscriptionEvents.Close, () => {
+        console.log('🔌 Deepgram live connection closed');
+        isDeepgramConnected = false;
+      });
+
+      deepgramConnection.on(window.deepgram.LiveTranscriptionEvents.Transcript, (data) => {
+        console.log('📨 Deepgram transcript event:', data);
+        
+        const transcript = data.channel?.alternatives?.[0]?.transcript;
+        
+        if (!transcript || transcript.trim() === '') {
+          console.log('⚠️ Empty transcript received');
+          return;
+        }
+
+        const isFinal = data.is_final;
+        const speechFinal = data.speech_final;
+
+        console.log(`📝 Deepgram: "${transcript}" (final: ${isFinal}, speech_final: ${speechFinal})`);
+        logStatus(`📝 Transcript: "${transcript}" (${speechFinal ? 'COMPLETE' : 'partial'})`);
+
+        // Update live transcript display
+        if (liveTranscript && liveTranscriptBox) {
+          liveTranscriptBox.style.display = 'block';
+          if (isFinal) {
+            // Show final transcript in white
+            liveTranscript.innerHTML = `<span class="text-white font-medium">${transcript}</span>`;
+          } else {
+            // Show interim transcript in gray
+            liveTranscript.innerHTML = `<span class="text-gray-400">${transcript}</span>`;
+          }
+          // Auto-scroll to bottom
+          liveTranscript.scrollTop = liveTranscript.scrollHeight;
+        }
+
+        // Update last transcript
+        if (isFinal) {
+          lastTranscript = transcript;
+          
+          // Clear existing timer
+          if (transcriptTimer) {
+            clearTimeout(transcriptTimer);
+          }
+          
+          // If speech_final is true, process immediately
+          if (speechFinal) {
+            console.log('✅ Speech completed (speech_final):', transcript);
+            handleFinalTranscript(transcript);
+          } else {
+            // Otherwise, wait 2.5 seconds of no new final transcripts before processing
+            transcriptTimer = setTimeout(() => {
+              if (lastTranscript && !isSpeaking) {
+                console.log('✅ Speech completed (timeout):', lastTranscript);
+                handleFinalTranscript(lastTranscript);
+                lastTranscript = '';
+              }
+            }, 2500);
+          }
+        }
+      });
+
+      deepgramConnection.on(window.deepgram.LiveTranscriptionEvents.Error, (err) => {
+        console.error('❌ Deepgram error:', err);
+        logStatus('⚠️ Transcription error: ' + err.message);
+      });
+
+      deepgramConnection.on(window.deepgram.LiveTranscriptionEvents.Metadata, (data) => {
+        console.log('📊 Deepgram metadata:', data);
+      });
+
+      logStatus("🎤 Initializing real-time transcription...");
+      return true;
+
+    } catch (error) {
+      console.error('Failed to initialize Deepgram:', error);
+      logStatus('⚠️ Could not initialize real-time transcription');
+      return false;
+    }
+  }
+
+  async function handleFinalTranscript(transcript) {
+    if (!transcript || !transcript.trim()) {
+      logStatus("⚠️ No speech detected");
+      return;
+    }
+
+    // Clear transcript timer
+    if (transcriptTimer) {
+      clearTimeout(transcriptTimer);
+      transcriptTimer = null;
+    }
+    lastTranscript = '';
+
+    // Clear live transcript display
+    if (liveTranscript) {
+      liveTranscript.innerHTML = '<span class="text-gray-500 italic">Processing...</span>';
+    }
+
+    try {
+      isSpeaking = true;
+      isListening = false;
+      
+      logStatus("📝 You said: " + transcript);
+      updateConversationState("🤖 Avatar thinking...");
+
+      // Send to LLM
+      const llmResp = await postPromptToLLM(transcript);
+      const botText = (llmResp?.text || "").trim();
+
+      if (!botText) {
+        logStatus("⚠️ Empty response from LLM, using fallback");
+        const fallbackText = "Could you please elaborate on that?";
+        logStatus("💬 Sarah: " + fallbackText);
+
+        if (sessionInfo && sessionToken) {
+          updateConversationState("🗣️ Avatar speaking...");
+          await heygenSendTask(sessionInfo.session_id, sessionToken, fallbackText);
+          await new Promise(r => setTimeout(r, 4000));
+        }
+      } else {
+        logStatus("💬 Sarah: " + botText);
+
+        if (sessionInfo && sessionToken) {
+          updateConversationState("🗣️ Avatar speaking...");
+          await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
+
+          // Wait for avatar to finish speaking
+          const speakingDuration = Math.max(1500, botText.length * 40);
+          await new Promise(r => setTimeout(r, speakingDuration));
+        }
+      }
+
+      isSpeaking = false;
+
+      // Resume listening
+      if (conversationActive && isDeepgramConnected) {
+        logStatus("✅ Ready for your response...");
+        updateConversationState("🎤 Listening...");
+        isListening = true;
+        
+        // Reset live transcript display
+        if (liveTranscript) {
+          liveTranscript.innerHTML = '<span class="text-gray-500 italic">Waiting for speech...</span>';
+        }
+      }
+
+    } catch (e) {
+      logStatus("Error processing speech: " + e);
+      isSpeaking = false;
+      if (conversationActive && isDeepgramConnected) {
+        isListening = true;
+        updateConversationState("🎤 Listening...");
+      }
+    }
   }
 
   // ----------------- HeyGen / Backend helpers -----------------
@@ -458,41 +681,54 @@
         }
       }
 
-      // Try to use the best available audio format
-      let mimeType = "audio/webm;codecs=opus";
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = "audio/webm";
+      // Use Deepgram live streaming if connected
+      if (isDeepgramConnected && deepgramConnection) {
+        logStatus("🎤 Starting live transcription...");
+        
+        // Create MediaRecorder to stream audio to Deepgram
+        let mimeType = "audio/webm;codecs=opus";
         if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = "audio/mp4";
+          mimeType = "audio/webm";
         }
-      }
-      console.log(`Using audio format: ${mimeType}`);
-      
-      recorder = new MediaRecorder(audioStream, { 
-        mimeType,
-        audioBitsPerSecond: 128000  // Set higher bitrate for better quality
-      });
-      
-      recorder.ondataavailable = (ev) => {
-        if (ev.data?.size > 0) {
-          recordedChunks.push(ev.data);
-          console.log(`Audio chunk received: ${ev.data.size} bytes`);
-        }
-      };
-      
-      recorder.onerror = (e) => {
-        console.error("MediaRecorder error:", e);
-        logStatus("❌ Recording error: " + e.error);
-      };
+        
+        recorder = new MediaRecorder(audioStream, { 
+          mimeType,
+          audioBitsPerSecond: 16000  // 16kbps is sufficient for speech
+        });
+        
+        recorder.ondataavailable = (ev) => {
+          if (ev.data?.size > 0 && isDeepgramConnected) {
+            // Send audio chunk directly to Deepgram
+            console.log(`📤 Sending ${ev.data.size} bytes to Deepgram`);
+            deepgramConnection.send(ev.data);
+          } else {
+            console.log(`⚠️ Not sending audio: size=${ev.data?.size}, connected=${isDeepgramConnected}`);
+          }
+        };
+        
+        recorder.onerror = (e) => {
+          console.error("MediaRecorder error:", e);
+          logStatus("❌ Recording error: " + e.error);
+        };
 
-      recorder.start(200); // Collect data every 200ms
-      isListening = true;
-      updateConversationState("🎤 Listening...");
-      logStatus("👂 Listening for your response...");
-      console.log("🎤 MediaRecorder started");
-      
-      // Start silence detection
-      detectSilence();
+        recorder.start(250); // Send chunks every 250ms
+        isListening = true;
+        updateConversationState("🎤 Listening (Live)...");
+        logStatus("👂 Listening with real-time transcription...");
+        console.log("🎤 Live streaming to Deepgram started");
+        
+        // Show live transcript box
+        if (liveTranscriptBox) {
+          liveTranscriptBox.style.display = 'block';
+        }
+        if (liveTranscript) {
+          liveTranscript.innerHTML = '<span class="text-gray-500 italic">Waiting for speech...</span>';
+        }
+        
+      } else {
+        logStatus("⚠️ Live transcription not available, using fallback");
+        // Fallback to batch mode would go here
+      }
       
     } catch (e) {
       logStatus("Microphone error: " + e);
@@ -690,6 +926,12 @@
         logStatus("⚠️ WebSocket unavailable, using HTTP (slower)");
       }
       
+      // Initialize Deepgram live streaming
+      const deepgramReady = await initDeepgramLiveStreaming();
+      if (!deepgramReady) {
+        logStatus("⚠️ Live transcription unavailable");
+      }
+      
       sessionToken = await requestSessionTokenFromBackend();
       sessionInfo = await heygenCreateSession(sessionToken);
       await heygenStartSession(sessionInfo.session_id, sessionToken);
@@ -728,6 +970,18 @@
       logStatus("🔌 WebSocket closed");
     }
     wsConnected = false;
+    
+    // Close Deepgram live connection
+    if (deepgramConnection) {
+      try {
+        deepgramConnection.finish();
+        logStatus("🔌 Deepgram connection closed");
+      } catch (e) {
+        console.error("Error closing Deepgram:", e);
+      }
+      deepgramConnection = null;
+      isDeepgramConnected = false;
+    }
     
     if (sessionInfo && sessionToken) await heygenStopSession(sessionInfo.session_id, sessionToken);
     if (room) { try { room.disconnect(); } catch {} room = null; }

@@ -23,7 +23,7 @@ Optional practice mode with **4 interviewer personalities**:
 - ✅ **Voice Activity Detection** - Detects when you stop speaking
 - ✅ **Realistic Avatar** - HeyGen lip-synced AI interviewer
 - ✅ **Smart Responses** - Google Gemini 2.0 powered
-- ✅ **Speech-to-Text** - OpenAI Whisper for accurate transcription
+- ✅ **Speech-to-Text** - Deepgram API for accurate transcription
 
 ### 🎨 **Premium UI**
 - Modern glassmorphism design
@@ -42,12 +42,23 @@ pip install -r requirements.txt
 ```
 
 ### 2. **Configure API Keys**
-Edit `backend/app.py` line 17:
-```python
-GEMINI_API_KEY = "your_actual_gemini_api_key_here"
+
+#### Option A: Environment Variables (Recommended)
+```bash
+export GEMINI_API_KEY="your_gemini_api_key_here"
+export DEEPGRAM_API_KEY="your_deepgram_api_key_here"
+export HEYGEN_API_KEY="your_heygen_api_key_here"  # Optional
 ```
 
-Get your API key: https://makersuite.google.com/app/apikey
+#### Option B: Edit `backend/app.py` (lines 28-29)
+```python
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your_actual_gemini_api_key_here")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "your_actual_deepgram_api_key_here")
+```
+
+**Get API Keys:**
+- Gemini: https://makersuite.google.com/app/apikey
+- Deepgram: https://console.deepgram.com/ (Free tier: 45,000 minutes/year)
 
 ### 3. **Run the Server**
 ```bash
@@ -105,7 +116,7 @@ Navigate to: `http://localhost:5000`
 | **Styling** | TailwindCSS |
 | **Avatar** | HeyGen Streaming API |
 | **Video** | LiveKit |
-| **Speech-to-Text** | OpenAI Whisper |
+| **Speech-to-Text** | Deepgram API |
 | **LLM** | Google Gemini 2.0 Flash |
 | **CV Parsing** | PyPDF2 |
 
@@ -134,11 +145,12 @@ HRBOT/
 - **Avatar ID**: Change HeyGen avatar character
 - **Voice ID**: Modify voice characteristics (optional)
 
-### **Environment Variables** (Optional)
+### **Environment Variables** (Recommended)
 ```bash
 export SECRET_KEY="your-secure-secret-key"
 export HEYGEN_API_KEY="your-heygen-key"
 export GEMINI_API_KEY="your-gemini-key"
+export DEEPGRAM_API_KEY="your-deepgram-key"
 ```
 
 ---
@@ -181,7 +193,7 @@ export GEMINI_API_KEY="your-gemini-key"
 ### **Server won't start**
 ```bash
 # Install all dependencies
-pip install flask requests openai-whisper PyPDF2
+pip install -r requirements.txt
 
 # Run from correct directory
 cd backend
@@ -200,15 +212,16 @@ python app.py
 
 ### **Avatar not responding**
 - Check Gemini API key is configured
+- Verify Deepgram API key is set
 - Verify internet connection
-- Wait 30-60 seconds on first use (Whisper loads)
+- Check browser console for errors
 
 ---
 
 ## 📊 System Requirements
 
 - **Python**: 3.8+
-- **RAM**: 2GB+ (Whisper model)
+- **RAM**: 1GB+ (lightweight with cloud APIs)
 - **Browser**: Chrome, Firefox, Edge (latest)
 - **Microphone**: Required for voice input
 - **Internet**: Stable connection for APIs
@@ -245,7 +258,7 @@ python app.py
 
 - **HeyGen** - Realistic AI avatars
 - **Google Gemini** - Advanced language model
-- **OpenAI Whisper** - Speech recognition
+- **Deepgram** - Fast and accurate speech recognition
 - **LiveKit** - Real-time video streaming
 
 ---
