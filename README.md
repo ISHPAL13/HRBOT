@@ -1,4 +1,4 @@
-# 🎯 InterviewAI - AI-Powered Interview Coach
+# 🎯 HireGenie - AI-Powered Interview Assistant
 
 Professional AI interview platform with CV-based personalized questions, multiple interviewer tones, and live conversation mode.
 
@@ -250,7 +250,7 @@ python app.py
 
 ## 📄 License
 
-© 2025 InterviewAI - Educational & Personal Use
+© 2025 HireGenie - Educational & Personal Use
 
 ---
 

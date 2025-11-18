@@ -1,5 +1,5 @@
 """
-FastAPI Server Runner for InterviewAI
+FastAPI Server Runner for HireGenie
 Run this file to start the server: python run.py
 """
 import uvicorn
