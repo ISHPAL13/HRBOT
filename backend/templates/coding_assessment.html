@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Technical Coding Assessment</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor/editor.main.css">
+  <style>
+    body {
+      background: #0a0e1a;
+      color: #f8fafc;
+      font-family: 'Inter', sans-serif;
+    }
+    #editor {
+      height: 500px;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body class="p-8">
+  <div class="max-w-7xl mx-auto">
+    <div class="mb-8">
+      <h1 class="text-3xl font-bold text-white mb-2">Technical Coding Assessment</h1>
+      <p class="text-gray-400">Solve the coding challenge below. Your code will be evaluated automatically.</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Problem Description -->
+      <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-xl font-bold text-indigo-400 mb-4">Problem Statement</h2>
+        <div id="problemDescription" class="text-gray-300 space-y-4">
+          <p><strong>Title:</strong> <span id="problemTitle">Two Sum</span></p>
+          <p><strong>Difficulty:</strong> <span id="problemDifficulty" class="px-2 py-1 bg-green-500/20 text-green-400 rounded">Easy</span></p>
+          <div id="problemText" class="mt-4">
+            <p>Given an array of integers <code class="bg-gray-700 px-2 py-1 rounded">nums</code> and an integer <code class="bg-gray-700 px-2 py-1 rounded">target</code>, return indices of the two numbers such that they add up to target.</p>
+            <p class="mt-2">You may assume that each input would have exactly one solution, and you may not use the same element twice.</p>
+          </div>
+          <div class="mt-4">
+            <p class="font-semibold">Example:</p>
+            <pre class="bg-gray-900 p-3 rounded mt-2 text-sm">
+Input: nums = [2,7,11,15], target = 9
+Output: [0,1]
+Explanation: nums[0] + nums[1] == 9, so we return [0, 1].</pre>
+          </div>
+        </div>
+
+        <!-- Test Cases -->
+        <div class="mt-6">
+          <h3 class="text-lg font-bold text-indigo-400 mb-3">Test Cases</h3>
+          <div id="testCases" class="space-y-2 text-sm">
+            <div class="bg-gray-900 p-3 rounded">
+              <p><strong>Test 1:</strong> nums = [2,7,11,15], target = 9</p>
+              <p class="text-green-400">Expected: [0,1]</p>
+            </div>
+            <div class="bg-gray-900 p-3 rounded">
+              <p><strong>Test 2:</strong> nums = [3,2,4], target = 6</p>
+              <p class="text-green-400">Expected: [1,2]</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Code Editor -->
+      <div>
+        <div class="bg-gray-800 rounded-lg p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-indigo-400">Code Editor</h2>
+            <select id="languageSelect" class="bg-gray-700 text-white px-4 py-2 rounded">
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="java">Java</option>
+              <option value="cpp">C++</option>
+            </select>
+          </div>
+          <div id="editor"></div>
+          <div class="mt-4 flex gap-3">
+            <button id="runBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-semibold">
+              ▶ Run Code
+            </button>
+            <button id="submitBtn" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded font-semibold">
+              ✓ Submit Solution
+            </button>
+            <button id="backBtn" class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-2 rounded font-semibold">
+              ← Back to Interview
+            </button>
+          </div>
+        </div>
+
+        <!-- Output Console -->
+        <div class="bg-gray-800 rounded-lg p-6 mt-6">
+          <h3 class="text-lg font-bold text-indigo-400 mb-3">Output</h3>
+          <div id="output" class="bg-gray-900 p-4 rounded text-sm font-mono text-gray-300 min-h-[150px]">
+            <p class="text-gray-500">Run your code to see output...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+  <script>
+    let editor;
+    const BACKEND_BASE = window.location.origin;
+
+    // Initialize Monaco Editor
+    require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
+    require(['vs/editor/editor.main'], function () {
+      editor = monaco.editor.create(document.getElementById('editor'), {
+        value: `def twoSum(nums, target):
+    # Write your solution here
+    pass
+    
+# Test your code
+print(twoSum([2,7,11,15], 9))`,
+        language: 'python',
+        theme: 'vs-dark',
+        fontSize: 14,
+        minimap: { enabled: false },
+        automaticLayout: true
+      });
+    });
+
+    // Language templates
+    const templates = {
+      python: `def twoSum(nums, target):
+    # Write your solution here
+    pass
+    
+# Test your code
+print(twoSum([2,7,11,15], 9))`,
+      javascript: `function twoSum(nums, target) {
+    // Write your solution here
+}
+
+// Test your code
+console.log(twoSum([2,7,11,15], 9));`,
+      java: `class Solution {
+    public int[] twoSum(int[] nums, int target) {
+        // Write your solution here
+        return new int[]{};
+    }
+    
+    public static void main(String[] args) {
+        Solution sol = new Solution();
+        int[] result = sol.twoSum(new int[]{2,7,11,15}, 9);
+        System.out.println(Arrays.toString(result));
+    }
+}`,
+      cpp: `#include <iostream>
+#include <vector>
+using namespace std;
+
+vector<int> twoSum(vector<int>& nums, int target) {
+    // Write your solution here
+    return {};
+}
+
+int main() {
+    vector<int> nums = {2,7,11,15};
+    vector<int> result = twoSum(nums, 9);
+    for(int i : result) cout << i << " ";
+    return 0;
+}`
+    };
+
+    // Change language
+    document.getElementById('languageSelect').addEventListener('change', (e) => {
+      const lang = e.target.value;
+      editor.setValue(templates[lang]);
+      monaco.editor.setModelLanguage(editor.getModel(), lang);
+    });
+
+    // Run code
+    document.getElementById('runBtn').addEventListener('click', async () => {
+      const code = editor.getValue();
+      const language = document.getElementById('languageSelect').value;
+      const output = document.getElementById('output');
+      
+      output.innerHTML = '<p class="text-yellow-400">⏳ Running code...</p>';
+      
+      try {
+        const response = await fetch(`${BACKEND_BASE}/api/run-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, language })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          output.innerHTML = `<p class="text-green-400">✓ Success</p><pre class="mt-2">${result.output}</pre>`;
+        } else {
+          output.innerHTML = `<p class="text-red-400">✗ Error</p><pre class="mt-2">${result.error}</pre>`;
+        }
+      } catch (e) {
+        output.innerHTML = `<p class="text-red-400">✗ Error: ${e.message}</p>`;
+      }
+    });
+
+    // Submit solution
+    document.getElementById('submitBtn').addEventListener('click', async () => {
+      const code = editor.getValue();
+      const language = document.getElementById('languageSelect').value;
+      const output = document.getElementById('output');
+      
+      output.innerHTML = '<p class="text-yellow-400">⏳ Evaluating solution...</p>';
+      
+      try {
+        const response = await fetch(`${BACKEND_BASE}/api/submit-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, language })
+        });
+        
+        const result = await response.json();
+        
+        if (result.passed) {
+          output.innerHTML = `
+            <p class="text-green-400 text-lg font-bold">🎉 All test cases passed!</p>
+            <p class="mt-2">Score: ${result.score}/100</p>
+            <p class="mt-2">Time: ${result.execution_time}ms</p>
+            <p class="mt-2 text-sm text-gray-400">Your solution has been saved to your interview report.</p>
+          `;
+        } else {
+          output.innerHTML = `
+            <p class="text-red-400 text-lg font-bold">✗ Some test cases failed</p>
+            <p class="mt-2">Passed: ${result.passed_tests}/${result.total_tests}</p>
+            <pre class="mt-2 text-sm">${result.details}</pre>
+          `;
+        }
+      } catch (e) {
+        output.innerHTML = `<p class="text-red-400">✗ Error: ${e.message}</p>`;
+      }
+    });
+
+    // Back to interview
+    document.getElementById('backBtn').addEventListener('click', () => {
+      window.location.href = '/interview';
+    });
+  </script>
+</body>
+</html>

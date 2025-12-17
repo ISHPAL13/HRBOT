@@ -3,9 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HR Interview Bot — Professional Dashboard</title>
+  <title>HireGenie — AI-Powered Interview Platform</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@deepgram/sdk"></script>
+  <script src="/static/deepgram-stt.js"></script>
   <script src="/static/script.js" defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -98,8 +100,6 @@
     
     .btn-secondary:hover {
       background: rgba(100, 116, 139, 0.6);
-      border-color: rgba(148, 163, 184, 0.4);
-      transform: translateY(-1px);
     }
     
     /* Card Styles */
@@ -145,18 +145,50 @@
       position: relative;
       border-radius: 16px;
       overflow: hidden;
+      min-height: 500px;
+      height: 500px;
       box-shadow: 
         0 20px 60px rgba(0, 0, 0, 0.5),
         0 0 80px rgba(99, 102, 241, 0.15),
         inset 0 1px 0 rgba(255, 255, 255, 0.05);
       background: linear-gradient(135deg, #000 0%, #0a0e1a 100%);
       border: 1px solid rgba(99, 102, 241, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     
     video {
       width: 100%;
       height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    
+    #mediaElement {
+      display: block;
+    }
+    
+    /* User Webcam in Corner */
+    #userWebcam {
+      position: absolute;
+      bottom: 15px;
+      right: 15px;
+      width: 160px;
+      height: 120px;
+      border-radius: 10px;
+      border: 2px solid rgba(99, 102, 241, 0.6);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6), 0 0 15px rgba(99, 102, 241, 0.4);
       object-fit: cover;
+      background: #000;
+      z-index: 10;
+      transition: all 0.3s ease;
+    }
+    
+    #userWebcam:hover {
+      transform: scale(1.08);
+      border-color: rgba(99, 102, 241, 0.9);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 25px rgba(99, 102, 241, 0.6);
     }
     
     /* Status Badge */
@@ -335,8 +367,8 @@
             </svg>
           </div>
           <div>
-            <h1 class="text-xl font-bold text-white tracking-tight">InterviewAI</h1>
-            <p class="text-xs font-semibold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Professional Edition</p>
+            <h1 class="text-xl font-bold text-white tracking-tight">HireGenie</h1>
+            <p class="text-xs font-semibold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">AI Interview Assistant</p>
           </div>
         </div>
       </div>
@@ -350,6 +382,13 @@
             </svg>
             Start Interview
           </button>
+          <button id="stopSpeakingBtn" class="btn-secondary w-full px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2" style="display:none;">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+            </svg>
+            Stop Speaking
+          </button>
           <button id="closeBtn" class="btn-danger w-full px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -357,13 +396,88 @@
             </svg>
             End Session
           </button>
+          <button id="evaluateBtn" class="btn-secondary w-full px-4 py-3 rounded-xl font-medium flex items-center justify-center gap-2" style="display:none;">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            Generate Report
+          </button>
+        </div>
+        
+        <!-- NEW FEATURES -->
+        <div class="pt-4 space-y-2 border-t border-gray-700/50">
+          <h2 class="font-semibold text-gray-300 text-xs uppercase tracking-wider mb-3">AI Features</h2>
+          
+          <div class="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/30 rounded-lg p-3 mb-3">
+            <div class="flex items-start gap-2">
+              <svg class="w-4 h-4 text-indigo-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+              </svg>
+              <div class="text-xs text-gray-300">
+                <p class="font-semibold text-indigo-300 mb-1">Auto CV Analysis Active</p>
+                <p class="text-gray-400">Questions are automatically generated from candidate's resume and adapted based on responses.</p>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Microphone Test -->
+          <button id="micTestBtn" class="btn-secondary w-full px-4 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+            </svg>
+            Test Microphone
+          </button>
+          <div id="micTestResult" class="text-xs text-center py-2" style="display:none;"></div>
+          <div id="micTranscript" class="bg-gray-900/50 rounded-lg p-3 text-xs" style="display:none;">
+            <p class="text-gray-400 mb-1 font-semibold">Transcript:</p>
+            <p id="transcriptText" class="text-gray-300 italic">Waiting for audio...</p>
+          </div>
+          
+          <button id="codingBtn" class="btn-secondary w-full px-4 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+            </svg>
+            Coding Assessment
+          </button>
+          
+          <button id="bodyLanguageBtn" class="btn-secondary w-full px-4 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Body Language Score
+          </button>
+          
+          <!-- Live Body Language Scores -->
+          <div id="bodyLanguageScores" class="bg-gray-900/50 rounded-lg p-3 text-xs" style="display:none;">
+            <div class="space-y-2">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-400">Posture:</span>
+                <span id="postureScore" class="font-bold text-green-400">--</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-400">Eye Contact:</span>
+                <span id="eyeContactScore" class="font-bold text-blue-400">--</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-400">Confidence:</span>
+                <span id="confidenceLevel" class="font-bold text-purple-400">--</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-400">Expression:</span>
+                <span id="facialExpression" class="font-bold text-indigo-400">--</span>
+              </div>
+            </div>
+            <div class="mt-2 pt-2 border-t border-gray-700">
+              <p class="text-[10px] text-gray-500 italic">Note: Currently using demo data. For production, integrate MediaPipe or Face-API.js for real analysis.</p>
+            </div>
+          </div>
         </div>
         
         <div class="pt-4 space-y-3">
           <h2 class="font-semibold text-gray-300 text-xs uppercase tracking-wider mb-3">Avatar Settings</h2>
           <div>
             <label class="block text-xs font-medium text-gray-400 mb-1.5">Avatar ID</label>
-            <input id="avatarID" type="text" value="Wayne_20240711"
+            <input id="avatarID" type="text" value="June_HR_public"
               class="w-full px-3 py-2.5 rounded-lg text-sm text-white placeholder-gray-500" />
             <p class="text-[10px] text-gray-600 mt-1">Voice automatically matches your selected tone</p>
           </div>
@@ -376,7 +490,7 @@
             <div class="w-2 h-2 rounded-full bg-gradient-to-r from-green-400 to-emerald-500 shadow-lg shadow-green-500/50 animate-pulse"></div>
             <span class="text-gray-400 font-medium">System Online</span>
           </div>
-          <p class="text-gray-600 text-[10px]">&copy; 2025 InterviewAI • v1.0</p>
+          <p class="text-gray-600 text-[10px]">&copy; 2025 HireGenie • v1.0</p>
         </div>
       </div>
     </aside>
@@ -414,8 +528,20 @@
               <span class="text-xs font-bold text-red-400 tracking-wider">LIVE</span>
             </div>
           </div>
-          <div class="video-container flex-1 min-h-[400px]">
-            <video id="mediaElement" class="w-full h-full" autoplay playsinline></video>
+          <div class="video-container">
+            <video id="mediaElement" autoplay playsinline></video>
+            <video id="userWebcam" autoplay playsinline muted></video>
+          </div>
+          
+          <!-- Live Transcript Display -->
+          <div id="liveTranscriptBox" class="mt-4 p-4 rounded-lg bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/30 backdrop-blur-sm" style="display: none;">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></div>
+              <span class="text-xs font-semibold text-indigo-300 uppercase tracking-wider">Live Transcript</span>
+            </div>
+            <div id="liveTranscript" class="text-white text-sm leading-relaxed min-h-[60px] max-h-[120px] overflow-y-auto">
+              <span class="text-gray-500 italic">Waiting for speech...</span>
+            </div>
           </div>
         </section>
 
