@@ -3,7 +3,7 @@
 // LIVE CONVERSATION MODE with automatic turn-taking
 (() => {
   // ----------------- CONFIG -----------------
-  const BACKEND_BASE = window.location.origin; 
+  const BACKEND_BASE = window.location.origin;
   const HEYGEN_API_BASE = "https://api.heygen.com";
   const SILENCE_THRESHOLD = 800; // ms of silence before sending audio (optimized for faster response)
   const MIN_RECORDING_TIME = 300; // minimum recording duration (optimized)
@@ -38,13 +38,13 @@
   let silenceTimer = null;
   let recordingStartTime = 0;
   let conversationActive = false;
-  
+
   // WebSocket state
   let ws = null;
   let wsConnected = false;
   let wsReconnectAttempts = 0;
   const MAX_WS_RECONNECT = 3;
-  
+
   // Deepgram live streaming state
   let deepgramConnection = null;
   let deepgramApiKey = null;
@@ -63,7 +63,7 @@
   function safeJson(res) {
     return res.json().catch(() => ({}));
   }
-  
+
   // Helper to get session ID from cookies
   function getSessionIdFromCookie() {
     const cookies = document.cookie.split(';');
@@ -86,18 +86,18 @@
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws/interview`;
-        
+
         logStatus("🔌 Connecting to WebSocket...");
         ws = new WebSocket(wsUrl);
-        
+
         ws.onopen = async () => {
           console.log("✅ WebSocket connected");
           wsConnected = true;
           wsReconnectAttempts = 0;
-          
+
           // Initialize session
           let sessionId = getSessionIdFromCookie();
-          
+
           // Fallback: Get session ID from user info API
           if (!sessionId) {
             console.log('⚠️ No session cookie, fetching from API...');
@@ -111,7 +111,7 @@
               console.error('Failed to get user info:', e);
             }
           }
-          
+
           if (sessionId) {
             console.log(`📤 Sending init with session_id: ${sessionId}`);
             ws.send(JSON.stringify({
@@ -121,25 +121,25 @@
           } else {
             console.log('⚠️ Could not get session_id, WebSocket may not work properly');
           }
-          
+
           resolve();
         };
-        
+
         ws.onmessage = (event) => {
           handleWebSocketMessage(JSON.parse(event.data));
         };
-        
+
         ws.onerror = (error) => {
           console.error("WebSocket error:", error);
           logStatus("⚠️ WebSocket error, will use HTTP fallback");
           wsConnected = false;
           reject(error);
         };
-        
+
         ws.onclose = () => {
           logStatus("🔌 WebSocket disconnected");
           wsConnected = false;
-          
+
           // Auto-reconnect if conversation is active
           if (conversationActive && wsReconnectAttempts < MAX_WS_RECONNECT) {
             wsReconnectAttempts++;
@@ -147,7 +147,7 @@
             setTimeout(() => connectWebSocket(), 2000);
           }
         };
-        
+
       } catch (error) {
         console.error("WebSocket connection error:", error);
         wsConnected = false;
@@ -155,14 +155,14 @@
       }
     });
   }
-  
+
   // WebSocket message handlers
   const wsCallbacks = {};
   let wsMessageId = 0;
-  
+
   function handleWebSocketMessage(message) {
     const action = message.action;
-    
+
     if (action === "init_success") {
       console.log("✅ WebSocket session initialized");
     } else if (action === "stt_response") {
@@ -179,14 +179,14 @@
       console.error("WebSocket error:", message.error);
     }
   }
-  
+
   // Send audio to STT via WebSocket
   async function sendAudioViaWebSocket(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
         const base64Audio = reader.result.split(',')[1]; // Remove data:audio/webm;base64, prefix
-        
+
         wsCallbacks.stt = (response) => {
           if (response.error) {
             reject(new Error(response.error));
@@ -194,7 +194,7 @@
             resolve({ text: response.text });
           }
         };
-        
+
         ws.send(JSON.stringify({
           action: "stt",
           audio: base64Audio
@@ -204,7 +204,7 @@
       reader.readAsDataURL(blob);
     });
   }
-  
+
   // Send prompt to LLM via WebSocket
   async function sendPromptViaWebSocket(prompt) {
     return new Promise((resolve, reject) => {
@@ -215,7 +215,7 @@
           resolve({ text: response.text });
         }
       };
-      
+
       ws.send(JSON.stringify({
         action: "llm",
         prompt: prompt
@@ -266,9 +266,9 @@
 
       deepgramConnection.on(window.deepgram.LiveTranscriptionEvents.Transcript, (data) => {
         console.log('📨 Deepgram transcript event:', data);
-        
+
         const transcript = data.channel?.alternatives?.[0]?.transcript;
-        
+
         if (!transcript || transcript.trim() === '') {
           console.log('⚠️ Empty transcript received');
           return;
@@ -297,12 +297,12 @@
         // Update last transcript
         if (isFinal) {
           lastTranscript = transcript;
-          
+
           // Clear existing timer
           if (transcriptTimer) {
             clearTimeout(transcriptTimer);
           }
-          
+
           // If speech_final is true, process immediately
           if (speechFinal) {
             console.log('✅ Speech completed (speech_final):', transcript);
@@ -360,7 +360,7 @@
     try {
       isSpeaking = true;
       isListening = false;
-      
+
       logStatus("📝 You said: " + transcript);
       updateConversationState("🤖 Avatar thinking...");
 
@@ -398,7 +398,7 @@
         logStatus("✅ Ready for your response...");
         updateConversationState("🎤 Listening...");
         isListening = true;
-        
+
         // Reset live transcript display
         if (liveTranscript) {
           liveTranscript.innerHTML = '<span class="text-gray-500 italic">Waiting for speech...</span>';
@@ -428,14 +428,14 @@
 
   async function heygenCreateSession(token) {
     logStatus("Creating new HeyGen streaming session...");
-    
+
     // Get voice configuration based on tone
     const voiceConfigRes = await fetch(`${BACKEND_BASE}/api/voice-config`);
     const voiceConfig = await voiceConfigRes.json();
     const selectedVoiceId = voiceConfig.voice_id;
-    
+
     logStatus(`Using ${voiceConfig.tone} tone with matched voice`);
-    
+
     const body = {
       quality: "high",
       version: "v2",
@@ -485,7 +485,7 @@
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ session_id: sid }),
       });
-    } catch {}
+    } catch { }
   }
 
   // Always force repeat mode
@@ -495,12 +495,12 @@
       logStatus("⚠️ Attempted to send empty text to HeyGen, skipping");
       return { code: 0, message: "Empty text skipped" };
     }
-    logStatus(`Sending text to HeyGen avatar: "${text.substring(0, 50)}..."`);  
+    logStatus(`Sending text to HeyGen avatar: "${text.substring(0, 50)}..."`);
     const res = await fetch(`${HEYGEN_API_BASE}/v1/streaming.task`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ 
-        session_id: sid, 
+      body: JSON.stringify({
+        session_id: sid,
         text: text.trim(),
         task_type: "repeat",
         silence_response: true,
@@ -528,7 +528,7 @@
         }
         if (mediaStream.getVideoTracks().length > 0) {
           mediaElement.srcObject = mediaStream;
-          mediaElement.play().catch(()=>{});
+          mediaElement.play().catch(() => { });
           logStatus("Attached avatar media to player");
         }
       } catch (e) { console.warn("track subscribe handler error", e); }
@@ -552,7 +552,7 @@
         // Fall through to HTTP
       }
     }
-    
+
     // HTTP fallback
     logStatus("Uploading audio to backend STT (HTTP)...");
     const fd = new FormData();
@@ -573,7 +573,7 @@
         // Fall through to HTTP
       }
     }
-    
+
     // HTTP fallback
     logStatus("Calling backend LLM (Gemini - HTTP)...");
     const res = await fetch(`${BACKEND_BASE}/llm`, {
@@ -594,7 +594,7 @@
 
     const average = dataArray.reduce((a, b) => a + b) / bufferLength;
     const isSilent = average < 3; // Very low threshold to capture more audio
-    
+
     // Debug: Log audio levels more frequently for troubleshooting
     if (Math.random() < 0.1) { // 10% of the time
       console.log(`🎤 Audio level: ${average.toFixed(2)} (threshold: 3, ${isSilent ? 'SILENT' : 'SPEAKING'})`);
@@ -631,21 +631,21 @@
   // ----------------- Continuous Audio Recording -----------------
   async function startListening() {
     if (isListening || isSpeaking || !conversationActive) return;
-    
+
     // Show stop button when listening starts
     if (stopSpeakingBtn) stopSpeakingBtn.style.display = 'flex';
-    
+
     try {
       recordedChunks = [];
       recordingStartTime = Date.now();
-      
+
       if (!audioStream) {
         logStatus("🎤 Requesting microphone access...");
         console.log("Requesting microphone permissions...");
-        
+
         try {
           // Request microphone with better constraints
-          audioStream = await navigator.mediaDevices.getUserMedia({ 
+          audioStream = await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
               noiseSuppression: false,  // Disable to capture more audio
@@ -653,17 +653,17 @@
               sampleRate: 44100  // Higher sample rate for better quality
             }
           });
-          
+
           console.log("✅ Microphone access granted");
           console.log("Audio tracks:", audioStream.getAudioTracks());
-          
+
           // Check if audio track is enabled
           const audioTrack = audioStream.getAudioTracks()[0];
           if (audioTrack) {
             console.log("Audio track settings:", audioTrack.getSettings());
             console.log("Audio track enabled:", audioTrack.enabled);
           }
-          
+
           // Set up audio analysis for VAD
           audioContext = new (window.AudioContext || window.webkitAudioContext)();
           const source = audioContext.createMediaStreamSource(audioStream);
@@ -671,7 +671,7 @@
           analyser.fftSize = 2048;
           analyser.smoothingTimeConstant = 0.3;  // Reduce smoothing for faster response
           source.connect(analyser);
-          
+
           logStatus("✅ Microphone initialized successfully");
         } catch (micError) {
           console.error("Microphone access error:", micError);
@@ -684,18 +684,18 @@
       // Use Deepgram live streaming if connected
       if (isDeepgramConnected && deepgramConnection) {
         logStatus("🎤 Starting live transcription...");
-        
+
         // Create MediaRecorder to stream audio to Deepgram
         let mimeType = "audio/webm;codecs=opus";
         if (!MediaRecorder.isTypeSupported(mimeType)) {
           mimeType = "audio/webm";
         }
-        
-        recorder = new MediaRecorder(audioStream, { 
+
+        recorder = new MediaRecorder(audioStream, {
           mimeType,
           audioBitsPerSecond: 16000  // 16kbps is sufficient for speech
         });
-        
+
         recorder.ondataavailable = (ev) => {
           if (ev.data?.size > 0 && isDeepgramConnected) {
             // Send audio chunk directly to Deepgram
@@ -705,7 +705,7 @@
             console.log(`⚠️ Not sending audio: size=${ev.data?.size}, connected=${isDeepgramConnected}`);
           }
         };
-        
+
         recorder.onerror = (e) => {
           console.error("MediaRecorder error:", e);
           logStatus("❌ Recording error: " + e.error);
@@ -716,7 +716,7 @@
         updateConversationState("🎤 Listening (Live)...");
         logStatus("👂 Listening with real-time transcription...");
         console.log("🎤 Live streaming to Deepgram started");
-        
+
         // Show live transcript box
         if (liveTranscriptBox) {
           liveTranscriptBox.style.display = 'block';
@@ -724,12 +724,12 @@
         if (liveTranscript) {
           liveTranscript.innerHTML = '<span class="text-gray-500 italic">Waiting for speech...</span>';
         }
-        
+
       } else {
         logStatus("⚠️ Live transcription not available, using fallback");
         // Fallback to batch mode would go here
       }
-      
+
     } catch (e) {
       logStatus("Microphone error: " + e);
       isListening = false;
@@ -738,25 +738,25 @@
 
   async function stopListeningAndProcess() {
     if (!isListening || !recorder) return;
-    
+
     isListening = false;
     clearTimeout(silenceTimer);
     silenceTimer = null;
 
     updateConversationState("💭 Processing...");
-    
+
     recorder.stop();
-    
+
     // Wait for final data
     await new Promise(resolve => {
       recorder.onstop = async () => {
         const blob = new Blob(recordedChunks, { type: "audio/webm" });
         const totalChunks = recordedChunks.length;
         recordedChunks = [];
-        
+
         console.log(`📦 Audio blob created: ${blob.size} bytes from ${totalChunks} chunks`);
         logStatus(`📦 Audio captured: ${blob.size} bytes from ${totalChunks} chunks`);
-        
+
         if (blob.size < 50) {  // Further reduced minimum to 50 bytes
           logStatus(`⚠️ Audio too short (${blob.size} bytes), resuming listening...`);
           console.log(`⚠️ Audio blob size: ${blob.size} bytes (too small, minimum 50)`);
@@ -765,18 +765,18 @@
           resolve();
           return;
         }
-        
+
         console.log(`✅ Audio blob size: ${blob.size} bytes - sending to STT`);
         console.log(`   Recording duration: ${Date.now() - recordingStartTime}ms`);
 
         try {
           isSpeaking = true;
           updateConversationState("🤖 Avatar thinking...");
-          
+
           const sttResp = await postAudioToSTT(blob);
           console.log("STT Response:", sttResp);
           const userText = (sttResp?.text || "").trim();
-          
+
           if (!userText) {
             logStatus(`⚠️ No speech detected in audio (STT response: ${JSON.stringify(sttResp)})`);
             logStatus("💡 Try speaking louder or check microphone settings");
@@ -793,16 +793,16 @@
           // Send user input to LLM (CV context and tone handled by backend)
           const llmResp = await postPromptToLLM(userText);
           const botText = (llmResp?.text || "").trim();
-          
+
           // Debug logging
           console.log("LLM Response:", llmResp);
           console.log("Bot Text:", botText);
-          
+
           if (!botText) {
             logStatus("⚠️ Empty response from LLM, using fallback");
             const fallbackText = "Could you please elaborate on that?";
             logStatus("💬 Sarah: " + fallbackText);
-            
+
             if (sessionInfo && sessionToken) {
               updateConversationState("🗣️ Avatar speaking...");
               await heygenSendTask(sessionInfo.session_id, sessionToken, fallbackText);
@@ -810,25 +810,25 @@
             }
           } else {
             logStatus("💬 Sarah: " + botText);
-            
+
             if (sessionInfo && sessionToken) {
               updateConversationState("🗣️ Avatar speaking...");
               await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
-              
+
               // Wait for avatar to finish speaking (optimized for speed)
               const speakingDuration = Math.max(1500, botText.length * 40); // ~40ms per character (faster)
               await new Promise(r => setTimeout(r, speakingDuration));
             }
           }
-          
+
           isSpeaking = false;
-          
+
           // Auto-resume listening for next turn
           if (conversationActive) {
             logStatus("✅ Ready for your response...");
             setTimeout(() => startListening(), 300);
           }
-          
+
         } catch (e) {
           logStatus("Error processing audio: " + e);
           isSpeaking = false;
@@ -844,10 +844,10 @@
   function updateConversationState(message) {
     if (conversationState) {
       conversationState.textContent = message;
-      
+
       // Update badge styling based on state
       conversationState.classList.remove('listening', 'speaking', 'processing');
-      
+
       if (message.includes('Listening')) {
         conversationState.classList.add('listening');
       } else if (message.includes('speaking')) {
@@ -863,24 +863,24 @@
     conversationActive = false;
     clearTimeout(silenceTimer);
     silenceTimer = null;
-    
+
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
     }
-    
+
     if (audioStream) {
       audioStream.getTracks().forEach(t => t.stop());
       audioStream = null;
     }
-    
+
     if (audioContext) {
       audioContext.close();
       audioContext = null;
     }
-    
+
     // Hide stop button when listening stops
     if (stopSpeakingBtn) stopSpeakingBtn.style.display = 'none';
-    
+
     updateConversationState("⏸️ Conversation paused");
   }
 
@@ -890,10 +890,10 @@
       logStatus("⚠️ Not currently listening");
       return;
     }
-    
+
     const recordingDuration = Date.now() - recordingStartTime;
     logStatus(`🛑 Manual stop - processing your speech... (recorded ${recordingDuration}ms, ${recordedChunks.length} chunks)`);
-    
+
     // Immediately trigger processing
     stopListeningAndProcess();
   }
@@ -902,57 +902,57 @@
   async function startSessionFlow() {
     try {
       startBtn.disabled = true;
-      
+
       // Get user info from session
       const userInfoRes = await fetch(`${BACKEND_BASE}/api/user-info`);
       const userInfo = await userInfoRes.json();
-      
+
       if (!userInfo.logged_in) {
         logStatus("❌ Not logged in. Redirecting...");
         window.location.href = '/login';
         return;
       }
-      
+
       logStatus("✅ Welcome ${userInfo.name}!");
       logStatus(`   Interview Mode: ${userInfo.mock_interview ? 'Mock (' + userInfo.tone + ')' : 'Real'}`);
-      
+
       // Show evaluate button after session starts
       if (evaluateBtn) evaluateBtn.style.display = 'flex';
-      
+
       // Connect WebSocket for faster communication
       try {
         await connectWebSocket();
       } catch (error) {
         logStatus("⚠️ WebSocket unavailable, using HTTP (slower)");
       }
-      
+
       // Initialize Deepgram live streaming
       const deepgramReady = await initDeepgramLiveStreaming();
       if (!deepgramReady) {
         logStatus("⚠️ Live transcription unavailable");
       }
-      
+
       sessionToken = await requestSessionTokenFromBackend();
       sessionInfo = await heygenCreateSession(sessionToken);
       await heygenStartSession(sessionInfo.session_id, sessionToken);
       await connectLiveKit(sessionInfo);
       logStatus("✅ Session started - Live conversation mode activated!");
-      
+
       // Start with personalized avatar greeting
       conversationActive = true;
       isSpeaking = true;
       updateConversationState("🗣️ Avatar speaking...");
-      
+
       const greeting = `Hello ${userInfo.name}! I'm Sarah, your interviewer today. Let's discuss your experience.`;
       await heygenSendTask(sessionInfo.session_id, sessionToken, greeting);
       logStatus("💬 Sarah: " + greeting);
-      
+
       // Wait for greeting to finish, then start listening
       setTimeout(() => {
         isSpeaking = false;
         startListening();
       }, 4000);
-      
+
     } catch (e) {
       logStatus("Start error: " + e);
       startBtn.disabled = false;
@@ -963,14 +963,14 @@
   async function stopSessionFlow() {
     conversationActive = false;
     stopListening();
-    
+
     // Close WebSocket connection
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.close();
       logStatus("🔌 WebSocket closed");
     }
     wsConnected = false;
-    
+
     // Close Deepgram live connection
     if (deepgramConnection) {
       try {
@@ -982,40 +982,40 @@
       deepgramConnection = null;
       isDeepgramConnected = false;
     }
-    
+
     if (sessionInfo && sessionToken) await heygenStopSession(sessionInfo.session_id, sessionToken);
-    if (room) { try { room.disconnect(); } catch {} room = null; }
+    if (room) { try { room.disconnect(); } catch { } room = null; }
     mediaElement.srcObject = null;
     sessionInfo = null; sessionToken = null;
     isSpeaking = false;
-    
+
     // Note: We keep user webcam running even after session ends
     // User can refresh page to stop it
-    
+
     updateConversationState("⏹️ Session ended");
     logStatus("Session stopped");
     startBtn.disabled = false;
-    
+
     // Keep evaluate button visible after ending session
     if (evaluateBtn) evaluateBtn.style.display = 'flex';
   }
 
   async function evaluateAndGenerateReport() {
     if (!confirm("End interview and generate evaluation report?")) return;
-    
+
     try {
       evaluateBtn.disabled = true;
       evaluateBtn.innerHTML = '<svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Evaluating...';
-      
+
       logStatus("🔍 Analyzing interview performance...");
-      
+
       const response = await fetch(`${BACKEND_BASE}/api/evaluate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
-      
+
       const result = await response.json();
-      
+
       if (result.success) {
         const evaluation = result.evaluation;
         logStatus(`✅ Evaluation Complete!`);
@@ -1023,11 +1023,11 @@
         logStatus(`   Technical: ${evaluation.technical_score}/100`);
         logStatus(`   Communication: ${evaluation.communication_score}/100`);
         logStatus(`   Experience: ${evaluation.experience_score}/100`);
-        
+
         // Download PDF
         const downloadUrl = `${BACKEND_BASE}/api/download-report/${result.report_filename}`;
         logStatus(`📄 Downloading PDF report...`);
-        
+
         // Create download link and click it
         const a = document.createElement('a');
         a.href = downloadUrl;
@@ -1035,11 +1035,11 @@
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        
+
         logStatus(`✅ Report downloaded successfully!`);
-        
+
         alert(`Evaluation Complete!\n\nOverall Score: ${evaluation.overall_score}/100\n\nPDF report has been downloaded.`);
-        
+
         // Reset button
         evaluateBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg> Generate Report';
         evaluateBtn.disabled = false;
@@ -1068,14 +1068,14 @@
     try {
       isSpeaking = true;
       updateConversationState("🤖 Avatar thinking...");
-      
+
       // Send user input to LLM (CV context and tone handled by backend)
       const llmResp = await postPromptToLLM(userText);
       const botText = (llmResp?.text || "").trim();
-      
+
       console.log("Manual LLM Response:", llmResp);
       console.log("Manual Bot Text:", botText);
-      
+
       if (!botText) {
         logStatus("⚠️ Empty response from LLM");
         const fallbackText = "I didn't quite catch that. Could you rephrase?";
@@ -1086,15 +1086,15 @@
         logStatus("💬 Sarah: " + botText);
         updateConversationState("🗣️ Avatar speaking...");
         await heygenSendTask(sessionInfo.session_id, sessionToken, botText);
-        
+
         // Wait for avatar to finish
         const speakingDuration = Math.max(3000, botText.length * 80);
         await new Promise(r => setTimeout(r, speakingDuration));
       }
-      
+
       taskInput.value = "";
       isSpeaking = false;
-      
+
       // Resume listening if conversation is active
       if (conversationActive) {
         setTimeout(() => startListening(), 300);
@@ -1112,14 +1112,14 @@
   async function startUserWebcam() {
     try {
       logStatus("📹 Starting your webcam...");
-      const videoStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: {
           width: { ideal: 320 },
           height: { ideal: 240 },
           facingMode: "user"
-        } 
+        }
       });
-      
+
       if (userWebcam) {
         userWebcam.srcObject = videoStream;
         logStatus("✅ Your webcam is active");
@@ -1139,13 +1139,13 @@
   }
 
   // ----------------- NEW FEATURES -----------------
-  
+
   // Microphone Test
   const micTestBtn = document.getElementById("micTestBtn");
   const micTestResult = document.getElementById("micTestResult");
   const micTranscript = document.getElementById("micTranscript");
   const transcriptText = document.getElementById("transcriptText");
-  
+
   micTestBtn?.addEventListener("click", async () => {
     try {
       micTestBtn.disabled = true;
@@ -1155,33 +1155,33 @@
       micTestResult.className = 'text-xs text-center py-2 text-yellow-400';
       micTranscript.style.display = 'block';
       transcriptText.textContent = 'Waiting for audio...';
-      
+
       // Request microphone
       const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micTestResult.textContent = '✅ Microphone access granted!';
       micTestResult.className = 'text-xs text-center py-2 text-green-400';
-      
+
       // Set up recording
       const testRecorder = new MediaRecorder(testStream, { mimeType: 'audio/webm' });
       const testChunks = [];
       testRecorder.ondataavailable = (ev) => {
         if (ev.data?.size > 0) testChunks.push(ev.data);
       };
-      
+
       // Test audio levels
       const testContext = new (window.AudioContext || window.webkitAudioContext)();
       const testSource = testContext.createMediaStreamSource(testStream);
       const testAnalyser = testContext.createAnalyser();
       testAnalyser.fftSize = 2048;
       testSource.connect(testAnalyser);
-      
+
       micTestResult.textContent = '🎤 Speak now to test (5 seconds)...';
       micTestResult.className = 'text-xs text-center py-2 text-blue-400';
       transcriptText.textContent = 'Recording...';
-      
+
       // Start recording
       testRecorder.start(200);
-      
+
       // Monitor audio for 3 seconds
       let maxLevel = 0;
       const monitorInterval = setInterval(() => {
@@ -1191,36 +1191,36 @@
         maxLevel = Math.max(maxLevel, level);
         micTestResult.textContent = `🎤 Audio level: ${level.toFixed(1)} (max: ${maxLevel.toFixed(1)})`;
       }, 100);
-      
+
       setTimeout(async () => {
         clearInterval(monitorInterval);
         testRecorder.stop();
-        
+
         testRecorder.onstop = async () => {
           testStream.getTracks().forEach(t => t.stop());
           testContext.close();
-          
+
           if (maxLevel > 3) {
             micTestResult.textContent = `✅ Microphone working! Max level: ${maxLevel.toFixed(1)}`;
             micTestResult.className = 'text-xs text-center py-2 text-green-400';
             logStatus(`✅ Microphone test passed (max level: ${maxLevel.toFixed(1)})`);
-            
+
             // Transcribe audio
             transcriptText.textContent = 'Transcribing...';
             transcriptText.className = 'text-yellow-300 italic';
-            
+
             try {
               const audioBlob = new Blob(testChunks, { type: 'audio/webm' });
               const fd = new FormData();
               fd.append("audio", audioBlob, "test.webm");
               const sttRes = await fetch(`${BACKEND_BASE}/stt`, { method: "POST", body: fd });
               const sttData = await sttRes.json();
-              
+
               if (sttData.text && sttData.text.trim()) {
                 transcriptText.textContent = `"${sttData.text}"`;
                 transcriptText.className = 'text-green-300';
                 logStatus(`📝 Transcript: ${sttData.text}`);
-                
+
                 // Hide transcript after 10 seconds
                 setTimeout(() => {
                   micTranscript.style.display = 'none';
@@ -1228,7 +1228,7 @@
               } else {
                 transcriptText.textContent = 'No speech detected in audio';
                 transcriptText.className = 'text-gray-400 italic';
-                
+
                 // Hide after 10 seconds
                 setTimeout(() => {
                   micTranscript.style.display = 'none';
@@ -1237,7 +1237,7 @@
             } catch (e) {
               transcriptText.textContent = `Transcription error: ${e.message}`;
               transcriptText.className = 'text-red-400';
-              
+
               // Hide after 10 seconds
               setTimeout(() => {
                 micTranscript.style.display = 'none';
@@ -1250,30 +1250,30 @@
             transcriptText.className = 'text-gray-400 italic';
             logStatus(`⚠️ Microphone test failed - no audio detected`);
           }
-          
+
           micTestBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg> Test Microphone';
           micTestBtn.disabled = false;
         };
       }, 5000);
-      
+
     } catch (error) {
       console.error("Microphone test error:", error);
       micTestResult.textContent = `❌ Error: ${error.message}`;
       micTestResult.className = 'text-xs text-center py-2 text-red-400';
       micTestResult.style.display = 'block';
       logStatus(`❌ Microphone test error: ${error.message}`);
-      
+
       micTestBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg> Test Microphone';
       micTestBtn.disabled = false;
     }
   });
-  
+
   // Coding Assessment
   const codingBtn = document.getElementById("codingBtn");
   codingBtn?.addEventListener("click", () => {
     window.location.href = '/coding-assessment';
   });
-  
+
   // Body Language Analysis
   const bodyLanguageBtn = document.getElementById("bodyLanguageBtn");
   const bodyLanguageScores = document.getElementById("bodyLanguageScores");
@@ -1282,26 +1282,26 @@
   const confidenceLevel = document.getElementById("confidenceLevel");
   const facialExpression = document.getElementById("facialExpression");
   let bodyLanguageInterval = null;
-  
+
   function updateBodyLanguageUI(analysis) {
     if (!analysis) return;
-    
+
     // Update scores
     postureScore.textContent = `${analysis.posture_score}/100`;
     eyeContactScore.textContent = `${analysis.eye_contact_score}/100`;
     confidenceLevel.textContent = analysis.confidence_level;
     facialExpression.textContent = analysis.facial_expression;
-    
+
     // Color code based on scores
-    postureScore.className = analysis.posture_score >= 80 ? 'font-bold text-green-400' : 
-                             analysis.posture_score >= 60 ? 'font-bold text-yellow-400' : 
-                             'font-bold text-red-400';
-    
-    eyeContactScore.className = analysis.eye_contact_score >= 80 ? 'font-bold text-green-400' : 
-                                analysis.eye_contact_score >= 60 ? 'font-bold text-yellow-400' : 
-                                'font-bold text-red-400';
+    postureScore.className = analysis.posture_score >= 80 ? 'font-bold text-green-400' :
+      analysis.posture_score >= 60 ? 'font-bold text-yellow-400' :
+        'font-bold text-red-400';
+
+    eyeContactScore.className = analysis.eye_contact_score >= 80 ? 'font-bold text-green-400' :
+      analysis.eye_contact_score >= 60 ? 'font-bold text-yellow-400' :
+        'font-bold text-red-400';
   }
-  
+
   bodyLanguageBtn?.addEventListener("click", async () => {
     if (bodyLanguageInterval) {
       // Stop analysis
@@ -1317,16 +1317,16 @@
       bodyLanguageBtn.classList.add('bg-green-600');
       bodyLanguageScores.style.display = 'block';
       logStatus("👁️ Body language analysis started (demo mode)...");
-      
+
       // Initial analysis
       try {
         const response = await fetch(`${BACKEND_BASE}/api/analyze-body-language`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
           updateBodyLanguageUI(result.analysis);
           logStatus(`📊 Body Language: Posture ${result.analysis.posture_score}/100, Eye Contact ${result.analysis.eye_contact_score}/100, Confidence: ${result.analysis.confidence_level}`);
@@ -1334,7 +1334,7 @@
       } catch (e) {
         console.error("Body language analysis error:", e);
       }
-      
+
       // Analyze every 10 seconds
       bodyLanguageInterval = setInterval(async () => {
         try {
@@ -1342,9 +1342,9 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
           });
-          
+
           const result = await response.json();
-          
+
           if (result.success) {
             updateBodyLanguageUI(result.analysis);
             logStatus(`📊 Body Language: Posture ${result.analysis.posture_score}/100, Eye Contact ${result.analysis.eye_contact_score}/100, Confidence: ${result.analysis.confidence_level}`);
