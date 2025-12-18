@@ -21,6 +21,12 @@ from typing import Optional, Dict
 import subprocess
 import re
 import secrets
+import db
+
+import db
+
+import db
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -91,21 +97,36 @@ def extract_text_from_pdf(pdf_path):
         print(f"Error extracting PDF: {e}")
         return None
 
-def get_tone_prompt(tone, cv_text, user_name):
-    """Generate interviewer prompt based on selected tone"""
-    base_context = f"""You are Sarah, an HR interviewer conducting an interview with {user_name}.
+def get_tone_prompt(tone, cv_text, user_name, job_details=None):
+    """Generate interviewer prompt based on selected tone and job details"""
+    
+    # Default values
+    role = "the target role"
+    experience = "relevant experience"
+    skills = "their skills"
+    
+    if job_details:
+        role = job_details.get('target_role') or role
+        experience = job_details.get('experience') or experience
+        skills = job_details.get('skills') or skills
 
-CANDIDATE'S CV SUMMARY:
+    base_context = f"""You are Sarah, an expert HR interviewer conducting an interview with {user_name} for the position of {role}.
+
+CANDIDATE PROFILE:
+- Target Role: {role}
+- Experience Level: {experience}
+- Key Skills: {skills}
+- CV Summary:
 {cv_text[:1500]}  
 
 INTERVIEW GUIDELINES:
-- Ask diverse questions covering different aspects: technical skills, projects, experience, soft skills, challenges faced
-- NEVER repeat similar questions or ask about the same topic twice
-- Move naturally between topics: projects → skills → teamwork → problem-solving → future goals
-- Build on their previous answers with NEW follow-up questions
-- If they mention something interesting, explore that instead of asking generic questions
-- Vary your question types: "What", "How", "Why", "Tell me about", "Describe", "What would you do if"
-- Keep the conversation flowing naturally like a real interview"""
+- Your goal is to assess their fit for {role}.
+- Ask questions tailored to their experience level ({experience}) and listed skills ({skills}).
+- NEVER repeat similar questions or ask about the same topic twice.
+- Move naturally between topics: projects → technical skills → soft skills → situational.
+- Build on their previous answers with NEW follow-up questions.
+- Vary your question types: "What", "How", "Why", "Tell me about", "Describe".
+- Keep the conversation flowing naturally like a real interview."""
 
     tone_styles = {
         'professional': """
@@ -179,11 +200,11 @@ async def index(request: Request):
     if 'user_name' not in session_data:
         return RedirectResponse(url="/login", status_code=302)
     
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
 @app.get("/login", response_class=HTMLResponse)
 async def login(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
 @app.get("/interview", response_class=HTMLResponse)
 async def interview(request: Request):
@@ -203,15 +224,24 @@ async def interview(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     
     print(f"   ✅ User {session_data.get('user_name')} accessing interview page")
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
 @app.post("/api/login")
 async def api_login(
     request: Request,
     userName: str = Form(...),
     userEmail: str = Form(...),
+    userPhone: Optional[str] = Form(None),
+    commPreferences: Optional[str] = Form(None),
     mockInterview: Optional[str] = Form(None),
     selectedTone: str = Form('professional'),
+    targetRole: Optional[str] = Form(None),
+    experience: Optional[str] = Form(None),
+    industry: Optional[str] = Form(None),
+    skills: Optional[str] = Form(None),
+    interviewType: Optional[str] = Form(None),
+    duration: Optional[str] = Form(None),
+    difficulty: Optional[str] = Form(None),
     cvFile: UploadFile = File(...)
 ):
     try:
@@ -239,10 +269,19 @@ async def api_login(
         session_data = {
             'user_name': userName,
             'user_email': userEmail,
+            'user_phone': userPhone,
+            'comm_preferences': commPreferences,
+            'target_role': targetRole,
+            'experience': experience,
+            'industry': industry,
+            'skills': skills,
+            'interview_type': interviewType,
+            'difficulty': difficulty,
+            'duration': duration,
             'cv_path': filepath,
             'cv_text': cv_text,
-            'mock_interview': mockInterview == 'on',
-            'interviewer_tone': selectedTone if mockInterview == 'on' else 'professional',
+            'mock_interview': True, # Always true for this flow or check mockInterview
+            'interviewer_tone': selectedTone,
             'conversation_history': []
         }
         save_session(session_id, session_data)
@@ -410,7 +449,7 @@ async def llm(request: Request):
         tone = session_data.get('interviewer_tone', 'professional')
         
         # Build prompt with CV context and tone
-        system_prompt = get_tone_prompt(tone, cv_text, user_name)
+        system_prompt = get_tone_prompt(tone, cv_text, user_name, session_data)
         
         # Get conversation history
         conversation_history = session_data.get('conversation_history', [])
@@ -597,7 +636,7 @@ async def websocket_interview(websocket: WebSocket):
                     tone = session_data.get('interviewer_tone', 'professional')
                     
                     # Build prompt
-                    system_prompt = get_tone_prompt(tone, cv_text, user_name)
+                    system_prompt = get_tone_prompt(tone, cv_text, user_name, session_data)
                     conversation_history = session_data.get('conversation_history', [])
                     
                     context = ""
@@ -620,12 +659,16 @@ IMPORTANT: Reply with ONE concise sentence (8-12 words). Be direct and natural."
                     # Generate response
                     print(f"   Calling Gemini 2.5 Flash with prompt length: {len(full_prompt)}")
                     
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=full_prompt
-                    )
-                    
-                    bot_response = response.text.strip()
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=full_prompt
+                        )
+                        bot_response = response.text.strip()
+                    except Exception as e:
+                        print(f"   ❌ Gemini 2.5 Flash failed: {e}")
+                        bot_response = ""
+
                     print(f"   Gemini raw response: '{bot_response}'")
                     print(f"   Response length: {len(bot_response)}")
                     
@@ -1114,6 +1157,46 @@ async def download_report(filename: str):
         print(f"   ❌ Download error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/records")
+async def get_records(request: Request):
+    """Get all interview records for the current user"""
+    session_id = get_session_id(request)
+    if not session_id:
+        return []
+    
+    session_data = get_session_data(session_id)
+    user_email = session_data.get('user_email')
+    
+    if not user_email:
+        return []
+        
+    return db.get_user_records(user_email)
+
+@app.delete("/api/records/{record_id}")
+async def delete_record(record_id: str, request: Request):
+    """Delete a record"""
+    db.delete_record(record_id)
+    return {"success": True}
+
+@app.post("/api/save-interview")
+async def save_interview_record(request: Request):
+    """Save an interview record"""
+    try:
+        data = await request.json()
+        session_id = get_session_id(request)
+        if session_id:
+            session_data = get_session_data(session_id)
+            if 'email' not in data:
+                data['email'] = session_data.get('user_email')
+            if 'name' not in data:
+                data['name'] = session_data.get('user_name')
+        
+        record = db.add_record(data)
+        return {"success": True, "record": record}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
+
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)
